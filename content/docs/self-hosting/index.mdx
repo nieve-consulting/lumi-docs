@@ -9,7 +9,7 @@ For development on Lumi itself, see [Getting started](/getting-started).
 
 ## What runs
 
-`deploy/compose.yaml` in Lumi's source, with its services in `compose.services.yaml`, starts up to eight services on a private network. Only the proxy publishes ports.
+[`deploy/compose.yaml`](https://github.com/nieve-consulting/lumi/blob/main/deploy/compose.yaml) in Lumi's source, with its services in [`compose.services.yaml`](https://github.com/nieve-consulting/lumi/blob/main/deploy/compose.services.yaml), starts up to eight services on a private network. Only the proxy publishes ports.
 
 | Service    | Image                          | What it does                                                                                                                                                                                     | Port (internal) |
 | ---------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
@@ -29,7 +29,7 @@ The widget isn't a separate service: the web app serves its script at `/scripts/
 - A Linux host (x86-64 or arm64) with Docker Engine 24 or later and Docker Compose 2.24 or later, which the choice of bundled or external services needs. Docker Desktop works for a local trial.
 - At least 2 CPU cores, 4 GB of memory and 20 GB of free disk. Building the images needs about 4 GB of memory on top of what is running.
 - For a public installation: a domain name pointing at the host, and ports 80 and 443 reachable from the internet, so the proxy can obtain a certificate. Alternatively, run it behind a TLS-terminating proxy or load balancer of your own; see [TLS and your own proxy](#tls-and-your-own-proxy).
-- An OpenAI API key with access to the models in `backend/src/ai/models.ts` and `frontend/src/lib/models.ts` in Lumi's source.
+- An OpenAI API key with access to the models in [`backend/src/ai/models.ts`](https://github.com/nieve-consulting/lumi/blob/main/backend/src/ai/models.ts) and [`frontend/src/lib/models.ts`](https://github.com/nieve-consulting/lumi/blob/main/frontend/src/lib/models.ts) in Lumi's source.
 - Optionally, an SMTP server to deliver enquiries by email, and a PostgreSQL server or S3-compatible storage of your own in place of the bundled ones.
 
 ### Outbound connections

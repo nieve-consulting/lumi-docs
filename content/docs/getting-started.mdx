@@ -7,10 +7,10 @@ This guide sets up Lumi for development: the application servers run from source
 
 ## Prerequisites
 
-- Node.js matching the root `.nvmrc` in Lumi's source.
+- Node.js matching the root [`.nvmrc`](https://github.com/nieve-consulting/lumi/blob/main/.nvmrc) in Lumi's source.
 - pnpm matching the `packageManager` field in the root `package.json`.
 - Docker with Compose v2 (`docker compose`) for the local services.
-- OpenAI API access to the models configured in `backend/src/ai/models.ts` in Lumi's source.
+- OpenAI API access to the models configured in [`backend/src/ai/models.ts`](https://github.com/nieve-consulting/lumi/blob/main/backend/src/ai/models.ts) in Lumi's source.
 - For PDF resumes, a Chromium headless shell (see [Start the configured application](#start-the-configured-application)).
 
 Nothing else is needed: admin sign-in, image uploads, PDF resumes and website crawls work with no AWS or Google account. Google Calendar booking is optional and stays off unless you configure it (`GOOGLE_SERVICE_ACCOUNT_CREDENTIALS`); Google Workspace sign-in is optional too, see [Admin access](/configuration/admin-access). Email and Langfuse tracing use the services you configure.
@@ -32,7 +32,7 @@ cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env.local
 ```
 
-They are gitignored; never commit credentials. Your business's identity is not configured in files: the installation's onboarding wizard asks for it the first time it opens; see [Business configuration](/configuration). The backend and frontend READMEs in Lumi's source (`backend/README.md` and `frontend/README.md`) describe the development variables. With the API key, database and storage settings in these files, development needs no cloud account.
+They are gitignored; never commit credentials. Your business's identity is not configured in files: the installation's onboarding wizard asks for it the first time it opens; see [Business configuration](/configuration). The backend and frontend READMEs in Lumi's source ([`backend/README.md`](https://github.com/nieve-consulting/lumi/blob/main/backend/README.md) and [`frontend/README.md`](https://github.com/nieve-consulting/lumi/blob/main/frontend/README.md)) describe the development variables. With the API key, database and storage settings in these files, development needs no cloud account.
 
 ## Start the local services
 
@@ -63,7 +63,7 @@ Start, stop or restart any development server while the proxy keeps running; a p
 
 ## Prepare the database
 
-The application schema and LangGraph checkpoint schema must be initialized before conversations work. Database preparation is a separate operator step: review the database documentation (`backend/db/README.md`) and the backend guide (`backend/AGENTS.md`) in Lumi's source. Coding agents must not apply migrations. This guide does not execute or bundle migrations into startup.
+The application schema and LangGraph checkpoint schema must be initialized before conversations work. Database preparation is a separate operator step: review the database documentation ([`backend/db/README.md`](https://github.com/nieve-consulting/lumi/blob/main/backend/db/README.md)) and the backend guide ([`backend/AGENTS.md`](https://github.com/nieve-consulting/lumi/blob/main/backend/AGENTS.md)) in Lumi's source. Coding agents must not apply migrations. This guide does not execute or bundle migrations into startup.
 
 ## Start the configured application
 
@@ -93,7 +93,7 @@ Open http://localhost:8080. Each server reloads when its code changes. These dev
 npx @puppeteer/browsers install chrome-headless-shell@stable --path ~/.cache/puppeteer
 ```
 
-For the optional MCP server (`pnpm -C backend dev:mcp`, at http://localhost:8080/mcp), see [MCP server](/developers/mcp-server). For widget development and installation, see `widget/README.md` in Lumi's source and [Embedding the widget](/using-lumi/embedding-the-widget).
+For the optional MCP server (`pnpm -C backend dev:mcp`, at http://localhost:8080/mcp), see [MCP server](/developers/mcp-server). For widget development and installation, see [`widget/README.md`](https://github.com/nieve-consulting/lumi/blob/main/widget/README.md) in Lumi's source and [Embedding the widget](/using-lumi/embedding-the-widget).
 
 ## Verify your setup
 
