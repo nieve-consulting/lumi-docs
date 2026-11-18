@@ -1,0 +1,108 @@
+---
+title: "Getting started"
+description: "Set up Lumi for development, with the application servers running from source behind local stand-ins for the database, media storage and proxy."
+---
+
+This guide sets up Lumi for development: the application servers run from source, with reloading, behind local services that stand in for the container installation's database, media storage and proxy. To install Lumi for a business, use the container installation in [Self-hosting](/self-hosting) instead.
+
+## Prerequisites
+
+- Node.js matching the root `.nvmrc` in Lumi's source.
+- pnpm matching the `packageManager` field in the root `package.json`.
+- Docker with Compose v2 (`docker compose`) for the local services.
+- OpenAI API access to the models configured in `backend/src/ai/models.ts` in Lumi's source.
+- For PDF resumes, a Chromium headless shell (see [Start the configured application](#start-the-configured-application)).
+
+Nothing else is needed: admin sign-in, image uploads, PDF resumes and website crawls work with no AWS or Google account. Google Calendar booking is optional and stays off unless you configure it (`GOOGLE_SERVICE_ACCOUNT_CREDENTIALS`); Google Workspace sign-in is optional too, see [Admin access](/configuration/admin-access). Email and Langfuse tracing use the services you configure.
+
+The widget is a separate npm package. It is not installed by the pnpm workspace command.
+
+## Prepare your checkout
+
+```sh
+git clone https://github.com/nieve-consulting/lumi.git
+cd lumi
+pnpm install --frozen-lockfile
+```
+
+Copy the example environment files, which point at the local services, and fill in `OPENAI_API_KEY` in both:
+
+```sh
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env.local
+```
+
+They are gitignored; never commit credentials. Your business's identity is not configured in files: the installation's onboarding wizard asks for it the first time it opens; see [Business configuration](/configuration). The backend and frontend READMEs in Lumi's source (`backend/README.md` and `frontend/README.md`) describe the development variables. With the API key, database and storage settings in these files, development needs no cloud account.
+
+## Start the local services
+
+```sh
+pnpm start:local-dev
+```
+
+It starts the services defined in `local-dev/docker-local-env.yaml`, and `pnpm stop:local-dev` stops them. It does not start the application servers.
+
+| Service | Address | Stands in for |
+| --- | --- | --- |
+| PostgreSQL with pgvector | `localhost:5432` | The database, as in the container installation. Its data is in the gitignored `local-dev/.pgdata` |
+| Media storage (SeaweedFS) | `localhost:8333` | Amazon S3, with the `lumi-media` bucket created at start. Its data is in a Docker volume |
+| Proxy (Caddy) | http://localhost:8080 | The container installation's proxy, with the same Caddyfile (`deploy/Caddyfile`) |
+
+The proxy is the address you open. It routes as a container installation does, to the development servers on your machine:
+
+| Path | Development server |
+| --- | --- |
+| `/agents` | `pnpm -C backend dev:agents`, port 4200 |
+| `/graphql` | `pnpm -C backend dev:apollo`, port 4000 |
+| `/pdf` | `pnpm -C backend dev:tasks`, port 4500 |
+| `/mcp`, `/oauth/*`, `/.well-known/oauth-*` | `pnpm -C backend dev:mcp`, port 4300 |
+| `PUT /lumi-media/*` (image uploads) | The media storage |
+| Everything else | `pnpm -C frontend dev`, port 3000 |
+
+Start, stop or restart any development server while the proxy keeps running; a path whose server isn't running answers 502. On Linux the proxy reaches your machine on the Docker bridge rather than localhost: set `TASKS_HOST=172.17.0.1` (the bridge's address) in `backend/.env` so it reaches the tasks server, which otherwise listens on localhost only. The tasks server then listens on that address only, so set `WEBSITE_CRAWLER_URL=http://172.17.0.1:4500` there too. Every port is published on localhost only and the credentials are for development only; do not expose this configuration publicly.
+
+## Prepare the database
+
+The application schema and LangGraph checkpoint schema must be initialized before conversations work. Database preparation is a separate operator step: review the database documentation (`backend/db/README.md`) and the backend guide (`backend/AGENTS.md`) in Lumi's source. Coding agents must not apply migrations. This guide does not execute or bundle migrations into startup.
+
+## Start the configured application
+
+Once configuration and database initialization are complete, run these in separate terminals from the repository root:
+
+```sh
+pnpm -C backend dev:apollo
+```
+
+```sh
+pnpm -C backend dev:agents
+```
+
+```sh
+pnpm -C backend dev:tasks
+```
+
+```sh
+pnpm -C frontend dev
+```
+
+Open http://localhost:8080. Each server reloads when its code changes. These development servers are not a production deployment recipe.
+
+`dev:tasks` renders PDF resumes and runs website crawls, which the backend sends it (`WEBSITE_CRAWLER_URL=http://localhost:4500`). A restart stops a crawl before its next page, which the websites page shows as stopped, or as interrupted when the server is killed mid-page; update the website's pages again to continue. PDFs need a Chromium headless shell: install one and set `PUPPETEER_EXECUTABLE_PATH` in `backend/.env` to the path it prints:
+
+```sh
+npx @puppeteer/browsers install chrome-headless-shell@stable --path ~/.cache/puppeteer
+```
+
+For the optional MCP server (`pnpm -C backend dev:mcp`, at http://localhost:8080/mcp), see [MCP server](/developers/mcp-server). For widget development and installation, see `widget/README.md` in Lumi's source and [Embedding the widget](/using-lumi/embedding-the-widget).
+
+## Verify your setup
+
+- Open the public chat at `/`, complete the onboarding wizard with your business's settings, and confirm a response streams successfully.
+- Sign in to `/admin` as an admin (the account the wizard created, or an authorized Workspace member) and confirm that signing out, or an account without admin access, is denied.
+- Upload an image in the admin interface, such as a team member's photo, and confirm it shows there and in the chat.
+- Add your website in **Knowledge → Websites**, wait for the crawl to complete, ask the chat about it, and ask something it doesn't cover to confirm it says it doesn't know; see [Knowledge sources](/configuration/knowledge).
+- Download a team member's PDF resume from the admin interface.
+- Verify conversation history and, if configured, the booking flow with your own calendar.
+- Embed the widget on a local page and check its host, language, and sizing.
+
+Use fictional enquiries during setup. Report blockers through the support channels in Lumi's `SUPPORT.md`, with sanitized logs and your exact commit.

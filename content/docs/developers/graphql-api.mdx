@@ -1,0 +1,115 @@
+---
+title: GraphQL API
+description: Read Lumi's published records and business settings from your own systems, and manage them with an admin key.
+---
+
+Lumi's GraphQL API holds the business's records (team members, projects, clients, capabilities, job openings and company information), its settings, its conversations and its websites. The admin interface runs on it, and your own systems can use it with an [API key](/developers/api-keys): a website can list your published projects and job openings and render their pages, in each language.
+
+The chat doesn't use GraphQL: it talks to the [streaming agents API](/developers/streaming-agents-api).
+
+## Endpoint and authentication
+
+| Installation | Endpoint |
+| --- | --- |
+| Container | `LUMI_PUBLIC_URL/graphql`, for example `https://lumi.example.com/graphql` |
+| Local development | `http://localhost:8080/graphql`, through the local proxy (see [Getting started](/getting-started)) |
+
+Send a `POST` with a JSON body (`query`, and optionally `variables` and `operationName`), and the key, as it is, in the `Authorization` header. There is no `Bearer` prefix.
+
+```bash
+curl https://lumi.example.com/graphql \
+  -H "Authorization: $LUMI_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"query { projects(language: \"es\") { id name url_slug summary } }"}'
+```
+
+Every request needs a key: there are no anonymous operations. A missing, wrong or revoked key gets `401`.
+
+### Sessions and keys
+
+- **Admin sessions** are for people. Admins sign in to the admin interface ([Admin access](/configuration/admin-access)), and the web app's server checks their session, then calls GraphQL on their behalf with the installation's own key. A browser session never reaches the GraphQL API directly.
+- **API keys** are for systems. Admins create them on the **Developer** tab of the company settings ([Admin interface](/using-lumi/admin-interface#company)); each is read-only or admin. See [API keys](/developers/api-keys) for creating, revoking and keeping them safe.
+- The installation's own key, `LUMI_API_KEY`, is for the web app and Lumi's services. In the container installation, the proxy marks requests from outside and the API refuses this key on them, so it only works on the private network.
+
+### What each key can do
+
+| Key | Can use |
+| --- | --- |
+| Read-only | The public operations below: published records and public business settings. No mutations, no other queries, no staff-only fields such as a client's `internal_webpage`, and no `includeUnpublished: true` |
+| Admin | Every query and mutation the admin interface uses, except managing API keys and administrators |
+| Installation key | Everything, including API keys, administrators and the first-run setup |
+
+Lumi checks the whole operation, fragments included, before running anything. An operation the key may not run gets an error whose `extensions.code` is `FORBIDDEN`, and nothing changes. A query or field added to Lumi later is refused to read-only keys until it is deliberately made public.
+
+## Field names are a contract
+
+Websites and other integrations depend on the schema's field names, so they don't change lightly. Use them exactly as the schema spells them: record fields are mostly snake_case (`url_slug`, `job_title`, `posted_at`), while settings and conversations use camelCase (`assistantName`, `createdAt`).
+
+Production installations don't answer introspection queries. The schema's source is in Lumi's code, one `types.gql.ts` per area under `backend/src/apollo/schema`; generate client types from a checkout of it.
+
+## Public operations
+
+These queries are open to read-only keys. They return only published records (capabilities: those a published team member or project uses) and public fields. Asking for a single unpublished record gives the same not-found error as asking for one that doesn't exist (`publicTeamMember` returns `null` instead), so a read-only key can't tell them apart.
+
+| Purpose | Queries |
+| --- | --- |
+| Projects | `projects`, `project(id)`, `projectBySlug(url_slug)` |
+| Team members | `teamMembers`, `teamMember(id)`, `teamMemberBySlug(url_slug)`, `publicTeamMember(id)` |
+| Clients | `clients`, `client(id)`, `clientBySlug(url_slug)` |
+| Capabilities | `capabilities`, `capability(id)` |
+| Job openings | `jobOpenings` (most recently posted first), `jobOpening(id)`, `jobOpeningBySlug(url_slug)` |
+| Company information | `company` |
+| Business settings | `publicBusinessSettings`: name, website, contact details, assistant name, logo, colour, default language, starters and greeting. `null` until the installation is set up |
+| Resume settings | `resumeSettings` |
+
+### Languages
+
+The record queries take an optional `language` argument, English by default, so a website can build its pages in each language:
+
+- A record with no translation in that language, or an outdated one (its English text changed after the translation was saved), comes back in English. So does a field the translation leaves empty.
+- Each record says in `language` which language it came back in, and in `fallback_fields` which fields fell back to English.
+- AI translations awaiting review and outdated translations are left out of read-only keys' `translations` fields.
+
+```graphql
+query JobOpening($slug: String!, $language: String) {
+  jobOpeningBySlug(url_slug: $slug, language: $language) {
+    title
+    summary
+    description
+    location
+    work_mode
+    posted_at
+    application_url
+    language
+    fallback_fields
+  }
+}
+```
+
+## Admin operations
+
+With an admin key, the API offers what the admin interface does. The main groups:
+
+| Purpose | Queries | Mutations |
+| --- | --- | --- |
+| Records, unpublished included | The public record queries with `includeUnpublished: true`, and `missingLanguage` to find records left to translate | `createProject`, `updateProject`, `deleteProject` and the same for team members, clients, capabilities and job openings; `updateCompany`; links such as `addTeamMembersToProject` and `addCapabilitiesToProject`; work experience with `addExperiencesToTeamMember` and `updateExperiences` |
+| Translations | | The `update*` mutations take a `language`; `saveTranslationDrafts` saves AI translations as drafts for review |
+| Images | `getDownloadUrl`, `mediaStorageConfigured` | `createUpload`, then `linkUploadToProjectImage` and the other `linkUploadTo*` mutations |
+| Conversations | `threads`, `thread(id)` with its summary, contact details, starting page, cost and `enquiries` | `updateThread`, `deleteThread`, `retryEnquiryDelivery` |
+| Dashboard | `dashboard(days)` | |
+| Websites | `websites`, `website(id)`, `searchWebsitePages(query)` | `createWebsite`, `updateWebsite`, `deleteWebsite`, `updateWebsitePages` (start a crawl), `clearProcessedWebsitePages` |
+| Settings | `businessSettings`, `handoffSettings`, `knowledgeSources`, `calendar` | `updateBusinessSettings`, `updateHandoffSettings`, `updateStructuredSources`, `updateResumeSettings`, `upsertAppointmentSettings` |
+
+Creating or updating a record never publishes it: publishing is the record's `published` field, set from the admin interface, by an admin key or with the [MCP server](/developers/mcp-server)'s `publish_record` tool.
+
+Only the admin interface, with the installation's key, can manage API keys (`apiKeys`, `createApiKey`, `revokeApiKey`) and administrators (`adminAccounts`, `createAdminAccount`, `deleteAdminAccount` and the password operations), or run the first-run setup (`setupBusiness`). An admin key can't give itself or anyone else lasting access.
+
+## Errors and limits
+
+Errors follow GraphQL's format, with a code in `extensions.code`. Besides `FORBIDDEN`:
+
+- `BAD_USER_INPUT`: a value failed Lumi's checks. Settings mutations list each problem in `extensions.problems`, as `{ field, message }`.
+- `NOT_FOUND`: a mutation named a record that doesn't exist, such as revoking an unknown key.
+- `RATE_LIMITED`: the key made too many requests, with HTTP status `429`, a `Retry-After` header and `extensions.retryAfterSeconds`.
+
+Each generated key may send 3,000 requests a minute, counting every request, even one that isn't valid GraphQL. The installation's own key has no limit. In the container installation, each client address may also send 3,000 requests a minute through the proxy, whatever key it uses.

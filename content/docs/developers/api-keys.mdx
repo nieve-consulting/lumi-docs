@@ -1,0 +1,70 @@
+---
+title: "API keys"
+description: "Create read-only or admin API keys so your own systems can call Lumi's GraphQL API and PDF rendering."
+---
+
+API keys let your own systems use Lumi's GraphQL API and PDF rendering. For example, your website can list your published projects, team members and job openings. Admins create and revoke keys in **Settings → Developer**. Each key is either read-only or admin.
+
+## Access
+
+| Access    | GraphQL                                                                                                                                                                                                                                        | PDF rendering (`/pdf`) |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Read-only | Published records and public business information only. No changes, no admin-only queries or staff-only fields, `includeUnpublished` refused, and translations that aren't public (AI drafts and outdated ones) are left out of `translations` | Yes, without scripts   |
+| Admin     | Every query and mutation the admin interface uses, except managing API keys and administrators                                                                                                                                                 | Yes, without scripts   |
+
+A read-only key can run these queries:
+
+- `projects`, `project`, `projectBySlug`
+- `teamMembers`, `teamMember`, `teamMemberBySlug`, `publicTeamMember`
+- `clients`, `client`, `clientBySlug`
+- `jobOpenings`, `jobOpening`, `jobOpeningBySlug`
+- `capabilities`, `capability`
+- `company`, `publicBusinessSettings`
+
+Within them it can select the fields the public may see, which is every field but staff-only ones such as a client's `internal_webpage`.
+
+Anything else is refused with a GraphQL error whose `extensions.code` is `FORBIDDEN`, and nothing runs. This includes mutations, every other query (conversations, enquiries, usage, settings, administrators, websites, upload links), staff-only fields and `includeUnpublished: true` on any field, written inline or passed as a variable. Queries and fields added to Lumi later are refused too, until they are deliberately made available to read-only keys.
+
+Give a system a read-only key unless it needs to change things. An admin key can do most of what an admin can do in the admin interface, such as changing records, settings and where enquiries go, so give one only to a system you trust like an admin. No generated key can create, list or revoke API keys, or list, add, remove or change administrators: only a signed-in admin can.
+
+## Creating and revoking keys
+
+1. In the admin interface, open **Settings → Developer** and choose **Create API key**.
+2. Name it after the system that will use it, for example "Website", and choose its access. Read-only is selected by default.
+3. Copy the key. It is shown only once: Lumi stores a hash of it, not the key itself. If you lose it, create a new one and revoke the old one.
+
+The list shows each key's name, access, last four characters, who created it and when, and when it was last used. Last use is recorded at most about once a minute.
+
+**Revoke** a key that leaked or that a system no longer needs. Requests with it are refused at once. To rotate a key without an interruption, create a new one, switch the system to it, and then revoke the old one.
+
+## Calling the API
+
+Send the key, as it is, in the `Authorization` header. There is no `Bearer` prefix.
+
+| Installation      | GraphQL                         | PDF rendering               |
+| ----------------- | ------------------------------- | --------------------------- |
+| Container         | `LUMI_PUBLIC_URL/graphql`       | `LUMI_PUBLIC_URL/pdf`       |
+| Local development | `http://localhost:8080/graphql` | `http://localhost:8080/pdf` |
+
+```bash
+curl https://lumi.example.com/graphql \
+  -H "Authorization: $LUMI_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"query { projects(language: \"en\") { id name url_slug } }"}'
+```
+
+The schema is in `backend/src/apollo/schema` in Lumi's source, one `types.gql.ts` per area. Production installations don't answer introspection queries, so generate client types from a checkout of the repository instead.
+
+`/pdf` takes a `POST` with a JSON body `{ "document": "<html>…", "filename": "resume.pdf" }` and an optional `pdfOptions`, and answers with the PDF. `pdfOptions` may set `format` (`A0` to `A6`, `Letter`, `Legal`, `Tabloid` or `Ledger`), `landscape`, `printBackground`, `scale` (0.1 to 2), `margin` (`top`, `right`, `bottom`, `left` as lengths in `px`, `in`, `cm` or `mm`, such as `10mm`), `pageRanges` (such as `1-5, 8`) and `preferCSSPageSize`; other options are ignored, and an invalid value, or page ranges past the document's last page, gets `400`. Documents sent with a generated key render without JavaScript, so style them with CSS in the document rather than scripts. The page only loads inline data, images over HTTPS from public addresses and Lumi's own resources. The container installation renders two at a time and answers `503` when 20 are waiting.
+
+A missing, wrong or revoked key gets `401`.
+
+Each generated key may send 3,000 GraphQL requests a minute, counting every request, even one that isn't valid GraphQL. Past that, requests get a GraphQL error whose `extensions.code` is `RATE_LIMITED`, with HTTP status `429` and a `Retry-After` header. In the container installation, each client address may also send 3,000 requests a minute to `/graphql` and `/pdf` together through the proxy, whatever key it uses.
+
+## Keeping keys safe
+
+- Use keys only from servers. Never put one in a browser, a mobile app or a public repository. Each key starts with `lumi_`, so secret scanners can find one that leaked.
+- Give each system its own key, so you can revoke one without affecting the others and see which is in use.
+- The installation's own `LUMI_API_KEY` is for the web app's server and Lumi's services, not for other systems. In the container installation, Lumi refuses it on requests that come through the proxy, so it only works on the private network.
+
+See [Security](/security) for how keys fit Lumi's trust boundaries.

@@ -1,0 +1,13 @@
+{
+  "title": "Lumi",
+  "pages": [
+    "index",
+    "getting-started",
+    "self-hosting",
+    "configuration",
+    "using-lumi",
+    "concepts",
+    "security",
+    "developers"
+  ]
+}

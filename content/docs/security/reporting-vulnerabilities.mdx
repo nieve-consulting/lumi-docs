@@ -1,0 +1,53 @@
+---
+title: Reporting vulnerabilities
+description: How to report a suspected security vulnerability in Lumi privately, what to include, and what the maintainers can promise.
+---
+
+If you think you have found a security vulnerability in Lumi, report it privately. Please don't disclose it in public issues, pull requests, discussions or anywhere else until the maintainers have addressed it.
+
+## How to report
+
+Report it with GitHub private vulnerability reporting on Lumi's repository, `nieve-consulting/lumi`: open its **Security** tab and choose **Report a vulnerability**. Only the maintainers see the report, and you can discuss the fix with them there.
+
+If you can't use GitHub, ask Nieve for a private channel instead:
+
+<Steps>
+<Step>
+
+### Ask Nieve for a private channel
+
+Contact Nieve Consulting through [Nieve's contact page](https://www.nieveconsulting.com/contact) and ask for a private security reporting channel. Say that you want to report a security issue in Lumi, but leave out its details.
+
+</Step>
+<Step>
+
+### Wait for a private route
+
+Nieve replies with a private way to send the report. Don't send sensitive details until you have it.
+
+</Step>
+<Step>
+
+### Send the report
+
+Send the full report through that private route.
+
+</Step>
+</Steps>
+
+## What to include
+
+- The affected Lumi version or commit. Use the exact version: the maintainers may ask you to reproduce the issue on current code.
+- A minimal reproduction, using fictional data.
+- The impact: what an attacker could do, and under which conditions.
+- Any mitigation you suggest.
+
+Don't include live credentials or other people's personal information. Investigate only systems you own or have permission to assess: test against your own installation, never someone else's.
+
+## Maintenance scope
+
+The project doesn't currently promise a security support window or backports for older releases. Fixes go into current code, so keep your installation updated. Response and remediation times depend on the maintainers' availability.
+
+## Operators' responsibilities
+
+If you run a Lumi installation, you manage its credentials, access controls, network exposure, backups, updates and the configuration of external services. Before exposing an installation publicly, read [Security](/security), [Self-hosting](/self-hosting) and [Data and privacy](/security/data-and-privacy).

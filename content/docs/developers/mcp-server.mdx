@@ -1,0 +1,115 @@
+---
+title: MCP server
+description: Connect ChatGPT and other MCP clients to Lumi to look up, create, update and publish your business's records.
+---
+
+Lumi includes a remote [MCP](https://modelcontextprotocol.io) server. With it, ChatGPT and other MCP clients can find, create, update, link and publish your projects, team members, clients, capabilities, work experience and job openings, and read your public company information. Your team can, for example, ask ChatGPT to draft a project from a blog post and add it to Lumi.
+
+Anyone can use its public tools without signing in: they answer from the same public information as Lumi's chat. Your team signs in to read unpublished records and to make changes, the same way they sign in to the [admin interface](/using-lumi/admin-interface).
+
+## What it offers
+
+The tools name records generically (`get_team_members`, `team_member`), so an integration works whatever your business calls them. Their titles and descriptions use your own labels from the [knowledge sources](/configuration/knowledge#structured-sources) settings, and a source that is turned off has no tools at all: its records are never offered, returned or mentioned.
+
+| Access | Tools | What they do |
+| --- | --- | --- |
+| Public, no sign-in | `get_projects`, `get_project`, `get_team_members`, `get_team_member`, `get_clients`, `get_client`, `get_capabilities`, `get_capability`, `get_job_openings`, `get_job_opening`, `get_company_info` | Read published records and the company information, in English or Spanish. Signed-in callers get the same public view from these tools |
+| Team read | `admin_get_projects`, `admin_get_project`, `admin_get_team_members`, `admin_get_team_member`, `admin_get_clients`, `admin_get_client`, `admin_get_capabilities`, `admin_get_capability`, `admin_get_job_openings`, `admin_get_job_opening`, `admin_get_work_experiences`, `prepare_project_from_url` | Read every record, published or not, with its translation status. `prepare_project_from_url` drafts a project from a public article and writes nothing |
+| Team write | `create_*`, `update_*` and `add_*` tools for projects, team members, clients, capabilities, job openings, contributions, capability ratings and work experience; `publish_record` and `unpublish_record` | Change records. Creating or updating a record never publishes it: `publish_record` does, for projects, clients, team members and job openings |
+
+How the tools protect your records:
+
+- **Published means public.** Only published records, and capabilities a published team member or project uses, reach the public tools. A hidden record answers the same as a missing one.
+- **Every write can be retried safely.** Writes take an idempotency key: retrying with the same key returns the first result without writing again.
+- **Updates can't overwrite newer changes.** Updates and publishing need the version of the record the user reviewed, and fail if it changed since, also through the admin interface.
+- **Languages stay apart.** An update in Spanish never changes the English text.
+- **Writes are audited.** Each write is recorded with who made it, the client, the tool, the record and the outcome; the [dashboard](/using-lumi/admin-interface#dashboard) lists recent ones. Tokens and record content aren't logged.
+
+Deleting records, removing links between records, uploading images, booking meetings and editing the company information aren't available through MCP; use the admin interface. Each tool's exact input and output schema is served by the MCP `tools/list` request.
+
+## Address
+
+| Installation | MCP server URL |
+| --- | --- |
+| Container | `LUMI_PUBLIC_URL/mcp`, for example `https://lumi.example.com/mcp` |
+| Local development | `http://localhost:8080/mcp`, through the local proxy (see [Getting started](/getting-started)) |
+
+The server also answers its OAuth endpoints (`/oauth/...`) and discovery documents (`/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server`) at the root of the same origin. The container installation's proxy forwards them for you. MCP clients such as ChatGPT only connect over HTTPS.
+
+## How your team signs in
+
+Signing in follows the installation's `ADMIN_AUTH_PROVIDER`, as for the admin interface ([Admin access](/configuration/admin-access)):
+
+- **`local` (email and password):** when a client connects, Lumi's connection page names the client and what it will be able to do, and asks for the admin's Lumi email and password. Every admin gets read and write access. Failed attempts count toward the [admin sign-in limits](/configuration/admin-access#passwords). An admin with a temporary password must change it in the admin interface first. Changing or resetting an admin's password, or removing the admin, disconnects their MCP clients at their next tool call.
+- **`workspace` (Google Workspace):** the connection page continues to Google. The account must be in one of `ADMIN_ALLOWED_DOMAINS`, with a verified email, and in `ADMIN_GOOGLE_GROUP`, the group that grants access to the admin interface: its members get read access. Write access goes to the members of `MCP_WRITE_GOOGLE_GROUP` when it's set, otherwise to the same group. Membership is checked at sign-in, at every token refresh and on every protected call, and kept for up to 5 minutes, so leaving the group ends access within minutes.
+
+In the container installation, `ADMIN_AUTH_PROVIDER` defaults to `local`. Elsewhere, set it explicitly: as in the admin interface, there is no default. When it is unset or any other value, or when the chosen method's settings are incomplete, the server offers only its public tools, anonymously, and logs why.
+
+## Setting it up
+
+The container installation runs the MCP server as its `mcp` service. Set these in `deploy/.env`:
+
+| Variable | Needed for | Description |
+| --- | --- | --- |
+| `MCP_TOKEN_SECRET` | Team sign-in | A random secret of at least 32 characters (for example `openssl rand -hex 32`). It signs the access tokens: changing it disconnects every client |
+| `MCP_ALLOWED_REDIRECT_ORIGINS` | Recommended | The origins of the MCP clients you use, comma-separated, such as `https://chatgpt.com` (the value in `deploy/.env.example`). Empty allows any `https` client, so a client anyone registers could ask an admin to sign in and receive their access; the service logs a warning |
+| `MCP_GOOGLE_CLIENT_ID`, `MCP_GOOGLE_CLIENT_SECRET` | `workspace` only | The Google OAuth client, below. Stay empty with `local` |
+| `MCP_WRITE_GOOGLE_GROUP` | `workspace`, optional | The Google Group allowed to use the write tools. `ADMIN_GOOGLE_GROUP` when empty |
+
+The service also uses `ADMIN_AUTH_PROVIDER`, and with Google Workspace the admin interface's `ADMIN_ALLOWED_DOMAINS`, `ADMIN_GOOGLE_GROUP`, `GOOGLE_DIRECTORY_CREDENTIALS` and `GOOGLE_DIRECTORY_IMPERSONATED_USER`. Its public address, `MCP_BASE_URL`, is set to `LUMI_PUBLIC_URL` for you. The `mcp` service checks its settings when it starts and refuses to start with a missing or weak `MCP_TOKEN_SECRET`, or with a `MCP_BASE_URL` or `MCP_ALLOWED_REDIRECT_ORIGINS` that isn't a valid origin.
+
+<Callout type="warn">
+`MCP_BASE_URL` must be the origin clients reach the server at: tokens are issued for it. Changing it later, for example to a new domain, invalidates every token issued for the old one, and users connect again.
+</Callout>
+
+### Google Workspace sign-in
+
+Only for `ADMIN_AUTH_PROVIDER=workspace`:
+
+<Steps>
+<Step>
+
+**OAuth client.** In the Google Cloud project you use for the admin interface's sign-in, add `LUMI_PUBLIC_URL/oauth/callback` (for example `https://lumi.example.com/oauth/callback`) to the authorized redirect URIs of the admin interface's web client, or create a separate web client for the MCP server. Set its id and secret as `MCP_GOOGLE_CLIENT_ID` and `MCP_GOOGLE_CLIENT_SECRET`.
+
+</Step>
+<Step>
+
+**Directory access.** Use the admin interface's service account with domain-wide delegation for the `https://www.googleapis.com/auth/admin.directory.group.member.readonly` scope (`GOOGLE_DIRECTORY_CREDENTIALS`) and the Workspace user it impersonates (`GOOGLE_DIRECTORY_IMPERSONATED_USER`). See [Google setup](/configuration/admin-access#google-setup).
+
+</Step>
+<Step>
+
+**Groups.** Members of `ADMIN_GOOGLE_GROUP` can read. To limit changes to fewer people, create a second group and set it as `MCP_WRITE_GOOGLE_GROUP`.
+
+</Step>
+</Steps>
+
+## Connecting ChatGPT
+
+<Steps>
+<Step>
+
+In ChatGPT, with developer mode on, add an app (connector) with your MCP server URL, such as `https://lumi.example.com/mcp`, and OAuth authentication. ChatGPT discovers Lumi's authorization server and identifies itself; you don't need a client id.
+
+</Step>
+<Step>
+
+The public tools work right away. The first tool that needs a sign-in, or **Connect**, opens Lumi's connection page: it continues to Google, or with email and password sign-in asks for the admin's Lumi email and password.
+
+</Step>
+<Step>
+
+ChatGPT asks for confirmation before running write tools by default. Review what it is about to change before you confirm.
+
+</Step>
+</Steps>
+
+Other MCP clients connect the same way, as long as their redirect origin is in `MCP_ALLOWED_REDIRECT_ORIGINS`. Lumi's authorization server supports OAuth 2.1 with PKCE, Client ID Metadata Documents and Dynamic Client Registration for public clients.
+
+## Sessions and limits
+
+- Access tokens last 1 hour and refresh tokens 30 days. Each refresh replaces the refresh token; the old one keeps working for 60 seconds, for retries, and replaying it after that ends the connection.
+- Each signed-in user may make 120 MCP requests a minute. Per client address: 600 anonymous MCP requests and 300 token requests a minute (ChatGPT sends many users' calls from a few shared addresses), 30 requests a minute to the browser sign-in pages and 5 client registrations a minute.
+- `prepare_project_from_url` only fetches public `http` and `https` addresses, without cookies or credentials, and treats the article's text as data, never as instructions.
+
+Lumi's code describes the server's internals in `backend/src/mcp/README.md`.

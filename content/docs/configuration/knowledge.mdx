@@ -1,0 +1,113 @@
+---
+title: "Knowledge sources"
+description: "The knowledge Lumi answers visitors from: crawled websites, company information and optional structured sources, with what is public and how crawls work."
+---
+
+Lumi answers visitors from knowledge your business already publishes: your website and your company information. There is no separate editor for writing knowledge in Lumi: publish articles, FAQs, pricing and policies on your website, and Lumi picks them up when it crawls it. Businesses can also use the optional structured sources (team members, projects, clients, capabilities and job openings), managed in the admin interface. None of them needs any Nieve system. The limits and checks below are defined in `@lumi/shared-contracts/knowledge` in Lumi's source (`packages/shared-contracts/src/knowledge.ts`).
+
+| Source              | Where admins manage it       | What the chat does with it                                                        | Required                                                       |
+| ------------------- | ---------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Websites            | **Knowledge → Websites**     | Searches the crawled pages                                                        | No                                                             |
+| Company information | **Settings → Company**       | Answers about your story, mission, values and contact details                     | No                                                             |
+| Team members        | **Knowledge → Team members** | Lists published team members and shows their profiles                             | Optional, turned on or off in **Settings → Knowledge sources** |
+| Projects            | **Knowledge → Projects**     | Lists published projects and shows their details                                  | Optional, as above                                             |
+| Clients             | **Knowledge → Clients**      | Lists published clients and shows their details                                   | Optional, as above                                             |
+| Capabilities        | **Knowledge → Capabilities** | Shows the capabilities of team members and projects, and finds them by capability | Optional, as above                                             |
+| Job openings        | **Knowledge → Job openings** | Lists published job openings to candidates and shows their details                | Optional, as above                                             |
+
+When nothing in these sources answers a question, Lumi says it doesn't have that information and offers to put the visitor in touch with your team, rather than inventing facts about your business.
+
+## What is public
+
+Everything the chat can use is public: anyone can read it by asking. Only these reach a conversation:
+
+- pages crawled from the websites you add, which are already public on the web;
+- published team members, projects, clients and job openings, and the capabilities linked to team members and projects, of the sources that are turned on (see [Public data](/developers/mcp-server));
+- the company information.
+
+Unpublished team members, projects, clients and job openings stay in the admin interface and never reach a conversation. Only add websites whose every listed page you would be happy for the chat to quote: use exclusions (below) to leave out pages that shouldn't be used.
+
+## Websites
+
+Add a website with its address and the path of its sitemap. Lumi reads the sitemap, fetches each page it lists, extracts the page's text and indexes it for search.
+
+### Supported content
+
+- **Sitemaps:** an XML sitemap (`urlset`) or a sitemap index (`sitemapindex`) listing XML sitemaps, one level deep, served as `application/xml` or `text/xml`. The sitemaps of an index must be on the website's host or the index's. If any of them fails, the whole crawl fails, so a partial read never removes pages. Compressed (`.xml.gz`) sitemaps, RSS/Atom feeds and plain-text URL lists aren't supported. A site without a sitemap can't be crawled yet.
+- **Pages:** HTML pages (`text/html` or `application/xhtml+xml`) on the website's own host, with or without `www.`. Pages on other hosts are skipped; a page that redirects to another host is removed. The text is the page's title followed by its `<article>` element when it has one, else its `<body>`, without scripts, styles, headers, footers and images. A page with no text is kept but not searchable. Pages are read as served: content that only appears after JavaScript runs isn't seen. PDFs and other documents aren't indexed: a sitemap that lists them doesn't fail the crawl.
+- **Exclusions:** glob patterns of paths to leave out, such as `/blog/**`.
+
+### Limits
+
+| Limit                         | Value                                                                                                                   |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Pages per crawl               | 1,000 after exclusions; further pages are left out and counted as over the limit                                        |
+| Sitemaps in a sitemap index   | 50                                                                                                                      |
+| Size of a sitemap or page     | 5 MB, after decompression                                                                                               |
+| Time per sitemap or page      | 15 seconds                                                                                                              |
+| Redirects per sitemap or page | 3                                                                                                                       |
+| Run time                      | About 8 minutes per run: a larger crawl stops before the time limit with **Stopped**, and **Update pages** continues it |
+
+### Safe fetching
+
+The website's address must be a public `http` or `https` address on the default port, without a user name or password. Lumi refuses local, private and reserved network addresses (such as `localhost`, `10.0.0.0/8`, `192.168.0.0/16`, `169.254.169.254` and their IPv6 equivalents) when the website is saved, and checks again every time it connects: each host name is resolved and every address must be public, the connection uses the address that was checked, and every redirect is checked the same way. Lumi sends no cookies or credentials, identifies itself as `LumiBot/1.0 (+https://lumi.nieve.ai)`, and doesn't read `robots.txt`: only add websites you are entitled to crawl.
+
+### Keeping the index up to date
+
+Crawls run when an admin starts them; there is no schedule. After you change your website, choose **Update pages** on the website's menu. An update:
+
+1. reads the sitemap again;
+2. skips pages whose sitemap `lastmod` date is not newer than when they were last indexed, and pages without a `lastmod` date already checked since the last crawl that completed;
+3. fetches every other page (new, modified, or without a `lastmod` date) and indexes it again only if its text changed;
+4. removes pages that answer `401`, `403`, `404 Not Found` or `410 Gone`, aren't HTML or are too large, redirect to another host, or redirect to another page the crawl reads;
+5. skips pages that time out or answer with a server error, keeping what was indexed from them, and tries them again on the next crawl;
+6. once every page has been checked, removes pages the sitemap no longer lists, now excluded, or over the page limit.
+
+Pages are told apart by their path and query string; exclusion patterns match the path alone. Removed pages and their search content are deleted, so the chat stops using them from the next message. A crawl that stops or fails removes nothing except those pages: run **Update pages** again to carry on from where it stopped. **Re-process** clears the website's pages and indexes them all again, such as after the extraction improves. **Clear pages** removes them all without crawling, and deleting the website removes it with its pages.
+
+The **Status** column shows the latest crawl:
+
+| Status      | Meaning and what to do                                                                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Queued      | Requested; the crawler is starting                                                                                                                |
+| Running     | Shows pages checked, indexed again and removed so far                                                                                             |
+| Completed   | Every page was checked. Shows how many were indexed again, removed or over the limit. Zero pages indexed means nothing changed since the last run |
+| Stopped     | Ran out of time on a large site. **Update pages** continues from where it stopped                                                                 |
+| Failed      | Shows why, such as the sitemap not answering, listing no pages, or a page that couldn't be loaded. Fix the cause and choose **Update pages**      |
+| Not started | The crawler never picked the request up. Try again; if it persists, check the crawler's deployment                                                |
+| Interrupted | The crawler stopped without reporting why. **Update pages** continues                                                                             |
+
+## Structured sources
+
+Lumi can show five kinds of records that most service businesses have, besides their website:
+
+| Source       | What it holds                                                                                                                                                                    | Shown when public                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Team members | The people on your team: role, bio, education, work experience, rated capabilities and project contributions, with a PDF resume while [resumes](/configuration#resumes) are on | Published                                    |
+| Projects     | The work you show: description, dates, location, client, capabilities and the team members who worked on it                                                                      | Published                                    |
+| Clients      | The customers you can name                                                                                                                                                       | Published                                    |
+| Capabilities | What your team and projects are known for, such as skills, specialities or practice areas, rated on team members from 1 to 5 stars                                               | Linked to a published team member or project |
+| Job openings | The positions you recruit for: title, summary, description, location, work mode, posted date and an optional application link                                                    | Published                                    |
+
+In **Settings → Knowledge sources**, for each source:
+
+- **Turn it off** if your business doesn't use it. The chat and the [MCP server](/developers/mcp-server) no longer offer its tools, leave its records out of other results (such as a project's team members, or capabilities), and never mention it. It also disappears from the admin navigation, the dashboard and the forms of the other records. Its records are kept, so turning it back on restores it.
+- **Name it** in your own words, with a singular and a plural label in English of at most 40 characters each, such as _Consultant_ / _Consultants_, _Architect_ / _Architects_ or _Practice area_ / _Practice areas_. The admin interface, the chat's instructions and tool descriptions and the MCP server use them. The chat translates them for visitors writing in other languages. Labels are lowercased inside sentences unless they look like a name or an acronym.
+
+Until an admin saves these settings, a source is on when it has at least one published record (capabilities: one linked to a published team member or project), so an existing installation keeps the sources it uses and a new one starts with none, and every source uses its default label. Changes reach conversations and the MCP server within a minute.
+
+## Job openings
+
+Publish your open positions in **Knowledge → Job openings**. Each opening has a title, a summary, a description (Markdown), a location, a work mode (remote, hybrid or on-site), a posted date, a URL slug for your website, and optionally its own application link. Like the other records, it's written in English first and can be translated with **Translate with AI**, reviewed before use, and is marked outdated when English changes; an outdated translation is read in English.
+
+When a candidate asks, the chat lists the published openings, most recently posted first, and shows one as a card whose button leads to the opening's application link, or without one to the careers page from the [business settings](/configuration). Unpublished openings never reach the chat, the public GraphQL queries or public MCP reads.
+
+With the source off, the chat and the MCP server neither offer nor mention job openings: candidates are answered from your company information and website, and pointed to the careers page or your team. Your website can list published openings and render their pages from the GraphQL API (`jobOpenings`, `jobOpening` and `jobOpeningBySlug`).
+
+## Requirements for installation and operations
+
+For packaging, backups, upgrades and [moving to another installation](/self-hosting/operations#moving-to-another-installation):
+
+- **Database:** PostgreSQL with the `pgvector` extension. Knowledge is stored in `websites`, `website_pages`, `website_page_vectors`, `website_crawls` and `knowledge_settings`, besides the company records and job openings. Back them up with the rest of the database. `website_page_vectors` can be rebuilt with **Re-process**, but restoring it avoids paying for the embeddings again. An [export](/security/data-and-privacy#export) holds the websites but not their pages or index: the new installation crawls them again.
+- **OpenAI:** embeddings with `text-embedding-3-small` for search (crawled pages and every search query) and `text-embedding-3-large` to split crawled pages into passages.
+- **Background work:** crawls run separately from the GraphQL server, which starts them asynchronously: on the worker service that `WEBSITE_CRAWLER_URL` names. It needs the database, OpenAI and outbound internet access to the websites.

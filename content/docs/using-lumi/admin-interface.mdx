@@ -1,0 +1,96 @@
+---
+title: Admin interface
+description: What your team does in Lumi's admin interface, from reviewing conversations and leads to managing knowledge and settings.
+---
+
+The admin interface at `/admin` on your installation is where your team follows conversations, picks up leads, keeps Lumi's knowledge current and changes its settings. Visitors never need it: the public chat and the widget work without a sign-in.
+
+## Signing in
+
+Open `/admin` (for example `https://lumi.example.com/admin`). Without a session, Lumi sends you to the sign-in page at `/auth/signin`, then back to the page you asked for.
+
+Each installation signs admins in one way, chosen by its operator: an email and password stored by Lumi, or a Google Workspace account in your team's Google Group. [Admin access](/configuration/admin-access) explains both, the first administrator, password rules and sign-in limits.
+
+The menu in the top-right corner has **Sign out** and, with email and password sign-in, **Change password**.
+
+## Navigation
+
+The side menu (a drawer on narrow screens) has three groups:
+
+| Group | Pages |
+| --- | --- |
+| (top) | **Dashboard**, **Conversations** |
+| Knowledge | **Websites**, then one page for each structured source that is on: team members, clients, projects, capabilities and job openings |
+| Settings | **Company**, **Appointments** |
+
+The structured sources' pages take the names your business gives them in **Company → Knowledge sources**, such as _Consultants_ instead of _Team members_, and a source that is turned off disappears from the menu. See [Knowledge](/configuration/knowledge#structured-sources).
+
+## Dashboard
+
+The dashboard summarises the last 7, 30 or 90 days (30 by default), counted in the time zone of the appointment settings:
+
+- **Totals and charts:** conversations, leads (conversations that left an email or phone number) and booked meetings per day, and the model cost per day.
+- **Recent leads:** the latest conversations of the range that left contact details, linking to each conversation.
+- **Model usage:** tokens and cost per purpose and model, for conversations and for the admins' own AI features (such as translation).
+- **MCP activity:** the changes made through the [MCP server](/developers/mcp-server) in the range, with who made them and whether they succeeded.
+- **Knowledge base:** how many records of each structured source there are and how many are published, and each website's searchable pages and last crawl.
+
+When a model has no known price, its calls are counted but the cost is marked incomplete.
+
+## Conversations
+
+**Conversations** lists every conversation, newest first, with when it started, its topic (_Ongoing chat_ until it has one), the visitor's name, email and phone when they gave them, its cost and whether it is closed. A conversation closes when the visitor books a meeting or sends an enquiry, or reaches its message limit.
+
+- **Search** by name, email or topic, and filter by status (open or closed) and by the day it started.
+- A red **Enquiry not delivered** badge marks a conversation whose enquiry didn't reach every channel, for your team to retry or follow up.
+- Each row's menu has **View** and **Delete**. Deleting a conversation can't be undone.
+
+### A conversation's page
+
+Opening a conversation shows:
+
+- **Summary:** its topic and summary, when and by whom it was started, and the page of your website it started on, when Lumi recorded it (see [Embedding the widget](/using-lumi/embedding-the-widget#what-the-widget-shares-with-the-chat)). **Summarize** asks the AI to write the topic and summary from the conversation so far, and to pick up the visitor's name, email and phone, and saves them. With [Langfuse](/self-hosting/operations#tracing-with-langfuse) configured, **Open in Langfuse** opens the conversation's trace.
+- **Enquiries:** each enquiry the visitor sent, with its status (_Delivered_, _Partly delivered_, _Not delivered_ or _Sending_) and the result and last error of each delivery channel. **Retry** sends a failed or partly delivered enquiry again through the channels that haven't delivered it. See [When delivery fails](/configuration/handoff#when-delivery-fails).
+- **Cost:** the conversation's model cost, with tokens and cost per purpose and model.
+- **Messages:** the conversation as the visitor saw it, with the cards Lumi showed.
+
+## Knowledge
+
+Lumi answers from what your business already publishes: the websites it crawls and your company information, plus the optional structured sources. There is no editor for writing articles, FAQs or policies in Lumi: publish them on your website and Lumi picks them up when it crawls it. [Knowledge](/configuration/knowledge) covers what each source holds, what is public, and the crawl limits.
+
+### Websites
+
+Add a website with its name, address, sitemap path, a description and any paths to exclude. Each website's menu has:
+
+- **Update Pages:** crawls the sitemap for new and changed pages. Run it after you change your website: crawls only run when an admin starts them.
+- **Re-process Sitemap:** deletes the website's pages and processes every page again. It is slower and costs more than **Update Pages**.
+- **Clear Processed Pages:** deletes the website's pages. The assistant can't use the website until it is crawled again.
+- **Edit** and **Delete**.
+
+The status column shows the latest crawl and its progress. [Keeping the index up to date](/configuration/knowledge#keeping-the-index-up-to-date) explains each status and what to do.
+
+### Structured sources
+
+Team members, clients, projects, capabilities and job openings each have a page listing their records, with a form to create and edit them. Team members, clients, projects and job openings have a **Published** switch: only published records reach the chat, the public GraphQL queries and the MCP server's public tools, and creating or editing a record never publishes it. A capability is public while a published team member or project uses it.
+
+Records are written in English first. Each list can translate records into another language with AI (**Translate into Spanish with AI**), and each form can switch language and translate a record from English. AI translations are saved as drafts for your team to review: until a translation is reviewed and saved, visitors read the record in English. When the English text changes later, the translation is marked outdated and read in English until it is updated.
+
+## Settings
+
+### Company
+
+**Company** opens the company settings, in tabs:
+
+| Tab | What it holds |
+| --- | --- |
+| Company knowledge | What the assistant can tell visitors about your company: founding story, values, vision, mission, location, contact details and website |
+| Business identity | The business's name, website and contact pages, the assistant's name, picture and greeting, logo, primary colour, default language, conversation starters, and the business description and guidance only the assistant sees. See [Configuration](/configuration) |
+| Enquiries & booking | The qualification questions, and how prospects reach your team: a booking page, the in-chat calendar or an enquiry sent to you. See [Qualification, booking and enquiries](/configuration/handoff) |
+| Knowledge sources | Which structured sources Lumi uses and what your business calls them. See [Knowledge](/configuration/knowledge#structured-sources) |
+| Resumes | Whether Lumi offers team members' PDF resumes, and their logo and colours |
+| Administrators | With email and password sign-in only: the admins, adding and removing them. See [Admin access](/configuration/admin-access) |
+| Developer | API keys for your own systems, such as your website. See [API keys](/developers/api-keys) |
+
+### Appointments
+
+**Appointments** sets how the in-chat calendar books meetings: the meeting length, the minimum free time before a meeting, how many hours ahead a same-day meeting must be booked, how many days ahead visitors can book, the days and times they can book, the host's time zone, the calendars Lumi checks for free time and the email of the person creating the appointments. The dashboard also counts its days in this time zone. See [Calendar booking](/configuration/handoff#calendar-booking).

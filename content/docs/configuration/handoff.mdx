@@ -1,0 +1,146 @@
+---
+title: "Qualification, booking and enquiries"
+description: "How Lumi hands a conversation to your team through qualification questions, booking pages, in-chat calendar booking and enquiries delivered by email or webhook."
+---
+
+When a visitor wants to take the conversation further, Lumi hands it to your team: it offers your booking page, books a time in your calendar, or sends your team an enquiry with the visitor's details. Admins decide what Lumi asks beforehand, which contact details it collects and where it sends visitors, in the admin interface under **Settings → Enquiries & booking**. Nothing is sent anywhere until you configure it, and no default recipient, calendar or booking page is used. The settings and their checks are defined in `@lumi/shared-contracts/handoff` in Lumi's source (`packages/shared-contracts/src/handoff.ts`).
+
+## Settings
+
+| Setting                 | What it does                                                                                                                  | Accepted values                                                        | Default                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------- |
+| Qualification questions | Lumi works them into the conversation, one or two at a time, before suggesting the next step. The answers go with the enquiry | Up to 8 questions, at most 200 characters each                         | None                                    |
+| Enquiry form            | Whether visitors can send an enquiry from the chat                                                                            | On or off; on needs at least one delivery channel                      | Off                                     |
+| Enquiry fields          | Name, email, phone and company: each off, optional or required                                                                | Email or phone must be required while enquiries are on                 | Email required, name and phone optional |
+| Booking destination     | None; a booking page (Calendly, a Google appointment page, …) with an optional button label; or the in-chat calendar picker   | A full web address for a booking page; the label at most 40 characters | None                                    |
+| Delivery channels       | Where each enquiry is sent: email recipients or a webhook. Several channels can be enabled                                    | Up to 5 channels; up to 10 recipients per email channel                | None                                    |
+
+Write qualification questions in your default language. Lumi asks them in the visitor's language and only asks what the visitor hasn't already said; the enquiry form labels the answers with the questions as you wrote them.
+
+### What visitors see
+
+When the visitor asks for a meeting, to send an enquiry or to be contacted, Lumi shows a card with what you enabled:
+
+| Booking destination | Enquiry form | The card                                                                                                                                                                           |
+| ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Booking page        | Off          | A button that opens your booking page in a new tab. The visitor books there; Lumi never reports it as booked and the chat stays open                                               |
+| Booking page        | On           | The booking button, and the enquiry form for visitors who prefer to be contacted                                                                                                   |
+| Calendar            | Off          | The calendar picker: the visitor picks a free slot and Lumi books it in the team's Google Calendar (see [Calendar booking](#calendar-booking))                                     |
+| Calendar            | On           | The calendar picker, and the enquiry form as the alternative to picking a time                                                                                                     |
+| None                | On           | The enquiry form                                                                                                                                                                   |
+| None                | Off          | No card: Lumi points the visitor to your contact page or email from the [business settings](/configuration), or says the team can't be reached from the chat when neither is set |
+
+The enquiry form shows only the fields you enabled, marks the optional ones, and is prefilled from the conversation: the visitor's details, an answer to each qualification question, and a summary of what they want to discuss. The visitor reviews and corrects everything before sending, and the form says the details go to your business. Fields you turned off are never collected. The topic Lumi gives the enquiry is shown too, so the visitor sees everything that is sent.
+
+The visitor is told the enquiry was sent only once a delivery channel accepted it; the conversation then closes. If no channel accepts it, the visitor is told it couldn't be sent, keeps what they entered, and can try again or use your contact link. Trying again sends the same enquiry, never a second one.
+
+## Delivery channels
+
+Each enquiry is stored with the conversation, then sent through every enabled channel. Channels are plugins: the backend registers one implementation per channel type (`backend/src/handoff/delivery/` in Lumi's source). This release ships email and webhook.
+
+### Email
+
+Sends each enquiry as an email to the channel's recipients, with the visitor's details, the qualification answers, the summary and a link to the conversation in the admin interface. Its Reply-To is the visitor's email when they gave one, and every attempt for the same enquiry carries the same Message-ID, so a resent email can be recognised.
+
+The server sends it from `EMAIL_FROM` through the SMTP server in `SMTP_URL`. The meeting emails to the hosts go the same way:
+
+| Variable     | Where             | Value                                                                                                          |
+| ------------ | ----------------- | -------------------------------------------------------------------------------------------------------------- |
+| `EMAIL_FROM` | Backend, required | The sender, e.g. `Lumi <assistant@example.com>`. Your SMTP server must accept it as a sender                   |
+| `SMTP_URL`   | Backend, required | An SMTP connection URL such as `smtps://user:password@smtp.example.com:465` or `smtp://user:password@host:587` |
+
+In the container installation, set both in `deploy/.env`. With `EMAIL_FROM` set but `SMTP_URL` empty, the services start with a warning in their logs and every email fails to send.
+
+Without `EMAIL_FROM` the email channel can't be selected in Settings, and an email channel saved earlier stops sending: while none of your channels can send, Lumi offers visitors no enquiry form. SMTP credentials live only in the server's environment.
+
+### Webhook
+
+Sends each enquiry as an HTTPS `POST` to the channel's URL, to feed a CRM, a helpdesk or an automation tool such as Zapier or Make. The URL must be `https://` on a public address and the default port (443), with no username or password in it; redirects aren't followed. A response with a 2xx status within 10 seconds counts as delivered.
+
+```json
+{
+  "event": "enquiry.created",
+  "enquiryId": "6f1c…",
+  "submissionId": "b2a9…",
+  "threadId": "0d4e…",
+  "createdAt": "2026-11-08T10:15:00.000Z",
+  "contact": { "name": "Ana García", "email": "ana@example.com" },
+  "qualification": [{ "question": "What is your budget?", "answer": "Around €40k" }],
+  "message": "We need a new booking platform for our clinics…",
+  "topic": "Clinic booking platform",
+  "conversationUrl": "https://lumi.example.com/admin/conversations/0d4e…"
+}
+```
+
+`contact` holds only the fields the visitor filled in; an unanswered question has an empty answer.
+
+Every request carries:
+
+| Header             | Value                                                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `Idempotency-Key`  | The same for every attempt to deliver one enquiry to this channel: ignore a request whose key you've already processed |
+| `X-Lumi-Timestamp` | Unix time in seconds when the request was signed                                                                       |
+| `X-Lumi-Signature` | `sha256=` and the hex HMAC-SHA256 of `<timestamp>.<raw body>`, keyed with the channel's signing secret                 |
+
+Verify the signature over the raw body before trusting a request, and reject old timestamps, for example more than 5 minutes off:
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto"
+
+function isFromLumi(rawBody, timestamp, signature, secret) {
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false
+  const expected = `sha256=${createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex")}`
+  return signature.length === expected.length && timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+}
+```
+
+The signing secret is set in Settings (16 to 200 characters; the form can generate one) and is never shown again: leave the field empty to keep it, or enter a new one to replace it.
+
+## When delivery fails
+
+In short: the visitor sends the enquiry form, Lumi stores the enquiry with the conversation and sends it through every enabled channel at once. If at least one channel accepts it, the visitor is told it was sent and the conversation closes; if none does, the visitor is told it couldn't be sent, keeps what they entered, and can try again with the same enquiry or use your contact link. Whenever a channel hasn't delivered it, the admin conversation list shows **Enquiry not delivered** until an admin fixes the cause and retries. Lumi never retries on its own.
+
+```mermaid
+flowchart TD
+  accTitle: Enquiry delivery and what happens when it fails
+  accDescr: The visitor sends the enquiry form. Lumi stores the enquiry with the conversation and sends it through every enabled channel. If at least one channel accepts it, the visitor is told it was sent and the conversation closes. If none does, the visitor is told it couldn't be sent and can try again with the same enquiry. Any channel that didn't deliver it marks the conversation Enquiry not delivered in the admin, where an admin fixes the cause and selects Retry delivery, which sends only through the current channels that haven't delivered it.
+  submit["Visitor sends the enquiry form"] --> store["Lumi stores the enquiry with the conversation"]
+  store --> send["Lumi sends it through every enabled channel: email, webhook"]
+  send --> accepted{"Did at least one channel accept it?"}
+  accepted -->|Yes| closed["Visitor is told it was sent; the conversation closes"]
+  accepted -->|No| failed["Visitor is told it couldn't be sent, keeps their details, and can use the contact link"]
+  failed -->|Tries again| send
+  closed --> every{"Did every channel deliver it?"}
+  every -->|Yes| done["Delivered"]
+  every -->|No| flagged["Admin conversation list shows Enquiry not delivered"]
+  failed --> flagged
+  flagged --> retry["Admin fixes the cause and selects Retry delivery"]
+  retry --> resend["Sent only through current channels that haven't delivered it"]
+```
+
+A conversation whose enquiry wasn't delivered to every channel shows **Enquiry not delivered** in the admin conversation list. Its page shows the enquiry and each channel's state: delivered, or failed with the number of attempts and the latest error. A delivery still sending after 5 minutes, for example because the server stopped mid-send, counts as failed. Webhook destinations are shown by host only, since a path may carry a token.
+
+Fix the cause, such as a wrong recipient, an unverified sender or a webhook that's down, then select **Retry delivery**. A retry sends the enquiry only through the current channels that haven't delivered it yet (every current channel when none has), so recipients who already have it don't get it twice. A channel removed since keeps its last state, shown as removed; once another channel has delivered the enquiry, its failure no longer marks the enquiry as not delivered.
+
+While no channel has delivered an enquiry, a visitor who tries again sends their corrected details, which replace the saved ones. Once one has, for example after your retry, trying again sends nothing new: the conversation closes and the visitor is told where your team will reply, as the delivered enquiry has it.
+
+Lumi doesn't retry on its own. Enquiries stay in the database with their conversation, whatever their delivery state.
+
+## Calendar booking
+
+The calendar booking destination keeps Lumi's in-chat picker, which reads free slots from Google Calendar and books the meeting there. It needs `GOOGLE_SERVICE_ACCOUNT_CREDENTIALS` on the backend, a service account allowed to act for the booking user, and the calendars and hours in the admin interface's **Appointment Settings**. The hosts are also emailed about each booking from `EMAIL_FROM`. Prefer a booking page unless you need slots booked inside the chat.
+
+### Setting up Google Calendar
+
+Lumi books meetings through a Google service account that acts for one Google Workspace user, the booking user: the meeting is created in that user's primary calendar, with a Google Meet link, and Google sends invitations to the hosts and the visitor.
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a project, or choose an existing one, and enable the **Google Calendar API** for it (**APIs & Services → Enable APIs and Services**).
+2. Create a service account (**IAM & Admin → Service Accounts**) and download a JSON key for it.
+3. In the [Google Workspace Admin console](https://admin.google.com/), open **Security → Access and data control → API controls → Domain-wide delegation**, and add the service account's client ID with the scope `https://www.googleapis.com/auth/calendar`.
+4. Base64-encode the key on one line (`base64 -w0 key.json`; on macOS, `base64 -i key.json`) and set it as `GOOGLE_SERVICE_ACCOUNT_CREDENTIALS`. In the [container installation](/self-hosting), set it in `deploy/.env` and run `docker compose up -d`.
+5. In the admin interface's **Appointment Settings**, set **Email of the person creating the appointment** to the booking user, and **Calendars to create bookings on** to the hosts' calendars: Lumi offers only times that are free in all of them, invites them to each meeting and emails them about it. Set the meeting length, the days and times visitors can book, the host timezone and how far ahead they can book.
+6. In **Settings → Enquiries & booking**, choose the calendar picker as the booking destination.
+
+## Data collected
+
+An enquiry stores the contact fields the visitor filled in, the qualification answers, the summary and topic, and each channel's delivery state, with the conversation. Deleting the conversation deletes its enquiries. Delivery copies them to the email recipients or the webhook's receiver, which keep them under their own retention. See [Data and privacy](/security/data-and-privacy), and [Deleting a visitor's data](/self-hosting/operations#deleting-a-visitors-data) for requests.

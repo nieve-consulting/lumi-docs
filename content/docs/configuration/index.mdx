@@ -1,0 +1,186 @@
+---
+title: "Business configuration"
+description: "Set a Lumi installation's business identity, branding, chat language, opening options, agent guidance and resumes through the onboarding wizard and admin settings."
+---
+
+Each Lumi installation represents one business. Its name, branding, chat language, public contact links, the chat's opening options, the agent's guidance and its team members' resumes are settings stored in the database, so serving another business needs no source changes and no rebuild. The settings and their checks are defined in `@lumi/shared-contracts/business`, and the resume settings in `@lumi/shared-contracts/resume`, in Lumi's source (`packages/shared-contracts/src/business.ts` and `resume.ts`).
+
+This page covers identity, presentation, agent guidance and resumes only. Qualification questions, booking and enquiry delivery are in [Qualification, booking and enquiries](/configuration/handoff); credentials and admin sign-in in [Self-hosting](/self-hosting), and what Lumi answers from in [Knowledge sources](/configuration/knowledge).
+
+## Onboarding
+
+A new installation has no business settings. Until it does:
+
+- Every page of the web app, the public chat and the admin interface included, redirects to the onboarding wizard at `/setup`. Only the `/widget` page, the web app's APIs and its static files are left as they are.
+- The `/widget` page says the assistant isn't available yet, and the widget shows no launcher.
+- The agents API answers new conversations with `503`.
+
+The wizard walks through the settings below and saves them. From then on the installation works normally, `/setup` is closed, and admins change the settings from the admin interface's Settings page.
+
+The wizard needs no sign-in. With email and password sign-in (`ADMIN_AUTH_PROVIDER=local`), its Administrator step also creates the first admin account, saved together with the settings; see [Admin access](/configuration/admin-access). Once saved, the settings can only be changed by signed-in admins; the wizard can't be run again.
+
+### Setup token
+
+With email and password sign-in the setup token is **required**: without one, `/setup` explains that it must be set and can't be completed, since whoever completes it becomes the first admin. With Google Workspace sign-in it is optional.
+
+Without a setup token, **whoever opens the installation first can complete the wizard**. Set `LUMI_SETUP_TOKEN` in the web app's environment to require a token instead: `/setup` then asks for it before showing the wizard, and checks it again when the wizard saves. Use a random value of at least 16 characters, for example from `openssl rand -base64 32`, and give it only to the person completing the setup.
+
+Set it before the installation is reachable, and always when deploying to an address the public already knows: until the wizard is completed, the web app sends every visitor to `/setup`. A token shorter than 16 characters disables the wizard until it is fixed. The web app reads it when it handles each request, so changing it needs no rebuild: in the [container installation](/self-hosting), set it in `deploy/.env` and run `docker compose up -d`. You can remove it once the setup is complete.
+
+## Public and server-only settings
+
+Everything except the agent guidance is public: the chat pages show it, the widget fetches the part it needs, and the agents API writes some of it into conversations. Never put secrets in these settings.
+
+The agent guidance is server-only. Only the backend reads it, to instruct the assistant, and only admins see it in the Settings page.
+
+### Public settings
+
+| Setting           | Required | Used for                                                                                                            | Accepted values                                                                       | When unset                                                                             |
+| ----------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Business name     | Yes      | The business in the chat page, the about dialog, resumes, the agent's identity and tool descriptions                | Text, at most 100 characters                                                          | —                                                                                      |
+| Website           | No       | The link on the business name below the standalone chat; allowed origin of resume downloads                         | Full web address, e.g. `https://www.example.com`                                      | No link                                                                                |
+| Careers page      | No       | The careers button on job opening cards without their own application link                                          | Full web address                                                                      | No button                                                                              |
+| Contact page      | No       | "Contact our team" links, including the message that closes a conversation after a booking                          | Full web address                                                                      | The contact email, if set                                                              |
+| Contact email     | No       | The contact address on resumes, and the contact link when there is no contact page                                  | Email address                                                                         | Contact links and the address are left out                                             |
+| Contact phone     | No       | The contact phone on resumes, as a link that dials it                                                               | Digits, spaces, dashes, dots or brackets, with 6 to 15 digits, e.g. `+34 610 096 740` | Left out                                                                               |
+| Assistant name    | No       | The assistant's name in the chat, the built-in greeting, its replies and the widget's launcher                      | Text, at most 40 characters                                                           | `Lumi`                                                                                 |
+| Assistant picture | No       | The assistant's picture in the chat header, messages, dialogs and the meeting picker                                | Full image address, or a path on the web app such as `/images/lumi-pebble.webp`       | Lumi's own picture                                                                     |
+| Logo              | No       | The business logo in the chat's about dialog. Resumes use their own logo: see [Resumes](#resumes)                   | As the assistant picture                                                              | The business name is shown as text                                                     |
+| Primary colour    | No       | The chat's accent colour (the visitor's messages, buttons, the meeting picker) and the widget launcher's background | Hex colour such as `#0f766e`, with at least 4.5:1 contrast for white text             | The default blue theme; the launcher has no background and uses the page's text colour |
+| Default language  | No       | The chat language when the visitor's choice, the page and the browser name no supported one                         | English or Spanish                                                                    | English                                                                                |
+| Greeting          | No       | The assistant's first message in every conversation. See [Greeting](#greeting)                                      | At most 500 characters per language                                                   | The built-in greeting                                                                  |
+| Starters          | No       | The suggested first messages the chat offers before a conversation starts. See [Starters](#starters)                | Up to 4                                                                               | The chat's built-in starters                                                           |
+
+The default language changes only the fallback for the interface and the fixed text the agents API writes. The visitor's remembered choice, the page's `language` parameter (set by the widget's `language` option) and, on the standalone chat, the browser's preferred languages still come first. The assistant always replies in the language of the visitor's latest message. Business knowledge stays in English, with optional translations; this setting doesn't change that.
+
+### Greeting
+
+The greeting is the assistant's first message, shown before the visitor writes and kept as the first message of every conversation. Write it in the default language, and in any other language your visitors use; languages left empty show the default language's text. It's plain text, so include the assistant's name yourself if you want it, and update the greeting when you rename the assistant.
+
+Without a greeting, the chat uses a built-in one that introduces the assistant by name, offers to tell the visitor about what you do, and offers to put them in touch with your team. Set your own to say what visitors can ask about, such as your services, team or past work.
+
+### Starters
+
+Each starter is a button the chat shows below its greeting; clicking it sends its message as the visitor's first. A starter has a label (at most 40 characters), a message (at most 500) and an optional icon.
+
+Write a starter's label and message in the default language, and in any other language your visitors use. Languages left empty show the default language's text. The assistant replies in the language of the message it gets, so translate messages into every language your visitors use; an untranslated label is fine.
+
+Keep the chat's built-in starters, which cover discussing a project, exploring past work and job openings; set your own if any of those doesn't apply to your business; or show none. The built-in starters about past work and job openings only show while the projects and job openings [knowledge sources](/configuration/knowledge) are on.
+
+### Server-only settings
+
+| Setting              | Used for                                                                                   | Accepted values               | When unset                           |
+| -------------------- | ------------------------------------------------------------------------------------------ | ----------------------------- | ------------------------------------ |
+| Business description | What the business provides, in the agent's identity: "…representing Acme, a provider of …" | Text, at most 300 characters  | The agent is introduced by name only |
+| Agent guidance       | Extra instructions for every conversation, such as tone, priorities or facts to mention    | Text, at most 2000 characters | No extra guidance                    |
+
+The guidance is added to the agent's instructions after Lumi's own rules. Those rules always take precedence: guidance can't widen the assistant's scope, give it tools or change what it may reveal. Keep it short and factual, and put business knowledge in the admin interface instead.
+
+## Resumes
+
+Lumi can offer each team member's resume as a PDF: the chat's team member cards link it, your website can link it (the [MCP server](/developers/mcp-server) gives its address), and admins download it from the team members list. Admins choose in **Settings → Resumes** whether Lumi offers resumes and how they look. The settings are public, like the business settings: the web app writes them into the PDF.
+
+| Setting          | Part of the resume | Used for                                                                                                                       | Accepted values                                                                                  | When unset                                                        |
+| ---------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| Generate resumes | —                  | Whether Lumi offers resumes at all. See [Turning resumes off](#turning-resumes-off)                                            | On or off                                                                                        | On                                                                |
+| Resume logo      | Header             | The logo in the header band, at the band's full height (65 pixels), centred. Separate from the chat's logo                     | An uploaded JPEG, PNG, WebP, GIF or AVIF image, an `https` address, or a path on the web app     | The business name, in black or white, whichever reads on the band |
+| Band colour      | Header             | The background of the header band, behind the logo, and of the footer band, behind the footer text                             | Hex colour such as `#000000`                                                                     | `#f1f5f9`, a light grey                                           |
+| Accent colour    | Headings           | Section headings, their dividers and the footer text                                                                           | Hex colour with 3:1 contrast on the white page, and 4.5:1 on the band colour with footer text    | `#334155`, a dark slate                                           |
+| Footer text      | Footer             | The large text in the footer band of every page, such as the website's address, linked to the business website when it has one | Text, at most 60 characters. Long text is set smaller to fit on one line                         | No footer band: only the date the resume was made                 |
+| Gradient colour  | Footer             | Optional, with footer text: the footer text fades from this colour into the accent colour, character by character              | Hex colour that keeps 4.5:1 contrast on the band colour all along the fade                       | The footer text in the accent colour alone                        |
+
+Upload a logo that reads on the band colour, such as a white logo for a dark band. It fits a space about four times as wide as it is tall, so include any margin you want around it in the image. Resumes can't load images over `http`, so the Settings page and the backend only accept an `https` address or an upload. A logo that can't be loaded when a resume is made, for example because its website removed it, is left out and the header shows the business name instead.
+
+Headings are large bold text, so the accent colour needs WCAG's 3:1 contrast for large text on the white page. Long footer text is set smaller to fit, below the size that counts as large text, so the footer text's colours need the 4.5:1 of normal text on the band colour. With a gradient colour, so does every colour the footer text's characters fade through: a gradient colour lighter than the band with an accent colour darker than it, or the other way round, fades through the band colour itself and is refused. A footer of a single character is drawn in the accent colour alone. The Settings page shows each colour's contrast as you type, and it and the backend refuse colours below it, naming the field and the contrast found. The resume's contact details and the footer text's link come from the [business settings](#public-settings), and the rest from the team member's profile.
+
+The settings apply to every resume, in every language, whether a visitor, your website or an admin asks for it. Until an admin saves them, resumes are on, with the neutral colours above, the business name in the header and no footer band.
+
+### Turning resumes off
+
+While resumes are off, Lumi doesn't offer or serve them anywhere:
+
+- The chat's team member cards have no resume link, including cards in earlier conversations.
+- The admin's team members list has no **Download Resume** action.
+- The assistant's and the MCP server's tool descriptions don't mention a resume, and team member results have no resume address.
+- Resume addresses, such as links on your website, answer `404`, for admins too.
+
+The logo, colours and footer text are kept for when resumes are turned back on.
+
+If the web app can't read the resume settings, for example while the API is unavailable, the resume addresses answer `503` and the admin offers no resume links, rather than risk serving resumes that were turned off. The chat pages keep their resume links as they last showed them.
+
+### Example: Nieve's resumes
+
+Nieve's resumes have a black band with Nieve's white logo, magenta headings and a cyan-to-magenta website address in the footer. To reproduce them:
+
+| Setting          | Value                       |
+| ---------------- | --------------------------- |
+| Generate resumes | On                          |
+| Resume logo      | Nieve's white-on-black logo |
+| Band colour      | `#000000`                   |
+| Accent colour    | `#ff00ff`                   |
+| Footer text      | `nieveconsulting.com`       |
+| Gradient colour  | `#00ffff`                   |
+
+## Validation
+
+The wizard and the Settings page check every setting before saving and show each problem next to its field, with how to fix it: for example a contact page that isn't a full web address, or a primary colour too light for white text. The backend checks the same rules again when it saves and reads them.
+
+## When changes apply
+
+Nothing needs a rebuild or a restart:
+
+| Where                    | When a saved change applies                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat pages               | Right away: saving refreshes the prerendered pages.                                                                                               |
+| Widget                   | The next time a host page loads it: the launcher fetches the assistant's name, the default language and the primary colour from the installation. |
+| Assistant and MCP server | Within about 30 seconds: each running server keeps the settings for that long.                                                                    |
+| Resumes                  | Right away for downloads, and for the chat pages' and the admin's resume links.                                                                   |
+
+The web app's chat language fallback follows within a minute. Browsers and CDNs may keep the widget's settings for a few minutes; an installation that isn't set up yet is never cached, so the launcher appears as soon as the wizard is completed. Existing conversations keep the greeting they started with.
+
+The web app keeps the settings, and whether resumes are on, in its data cache, which survives restarts. A change made outside the wizard and the Settings page, such as restoring a database backup, shows within an hour, or right away after saving the settings once.
+
+## Embedding the widget
+
+The widget's launcher runs on the business's website and loads the chat from the Lumi web app in an iframe. It finds the installation in this order:
+
+1. The `origin` option: `LumiWidget.init({ selector: "lumi-widget", origin: "https://lumi.example.com" })`.
+2. `LUMI_WIDGET_ORIGIN`, set when building the widget.
+3. For the bundle the web app serves at `/scripts/lumi-widget.bundle.umd.js`, the origin it was loaded from.
+
+An origin that isn't a Lumi installation (it has no `/api/business`, e.g. a CDN serving a copy of the bundle) shows no launcher.
+
+A development build connects to `http://localhost:8080`, the web app behind the local development proxy ([Getting started](/getting-started)), unless given an `origin`. The simplest embed needs no options:
+
+```html
+<script src="https://lumi.example.com/scripts/lumi-widget.bundle.umd.js"></script>
+<div id="lumi-widget"></div>
+<script>
+  LumiWidget.init({ selector: "lumi-widget" })
+</script>
+```
+
+The host page's Content Security Policy must allow the installation's origin for `frame-src` and `connect-src`. The web app's origin must also be in the backend's `AGENTS_ALLOWED_ORIGINS`; the container installation sets it to `LUMI_PUBLIC_URL`. All options are in [Embedding the widget](/using-lumi/embedding-the-widget).
+
+## Example: a second business
+
+Fjordline Architects, an architecture studio, completes the wizard on its own installation at `https://assistant.fjordline.example`:
+
+| Setting              | Value                                                                                                                                                                 |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Business name        | Fjordline Architects                                                                                                                                                  |
+| Website              | `https://www.fjordline.example`                                                                                                                                       |
+| Contact page         | `https://www.fjordline.example/contact`                                                                                                                               |
+| Contact email        | `studio@fjordline.example`                                                                                                                                            |
+| Contact phone        | `+47 22 00 00 00`                                                                                                                                                     |
+| Careers page         | Left empty: job opening cards have no careers button                                                                                                                  |
+| Assistant name       | Ada                                                                                                                                                                   |
+| Assistant picture    | `https://cdn.fjordline.example/brand/ada.png`                                                                                                                         |
+| Logo                 | `https://cdn.fjordline.example/brand/logo.svg`                                                                                                                        |
+| Primary colour       | `#0f766e`                                                                                                                                                             |
+| Default language     | Spanish                                                                                                                                                               |
+| Starters             | "Hablar de un proyecto" / "Discuss a project"; "Ver nuestras obras" / "See our buildings"; "Reservar una visita al estudio", with the message translated into English |
+| Business description | architecture, interior design and urban planning for public and residential projects                                                                                  |
+| Agent guidance       | We work from studios in Oslo and Bergen. Mention our sustainability certifications when visitors ask about materials.                                                 |
+
+Its website embeds the widget from `https://assistant.fjordline.example/scripts/lumi-widget.bundle.umd.js`. The widget doesn't follow the browser's language, so on pages that don't set its `language` option visitors meet Ada in Spanish. On the standalone chat, Spanish-speaking visitors and those whose browser names no supported language meet Ada in Spanish.

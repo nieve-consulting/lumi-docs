@@ -1,0 +1,140 @@
+---
+title: Contributing
+description: How to improve these docs, and how contributions to Lumi's code work.
+---
+
+Lumi's documentation is open source, and fixes, clarifications and new pages are welcome, from a typo to a guide for a setup you've run. Contributions to Lumi's code go through Lumi's own repository and follow the principles below.
+
+Everyone taking part follows the [code of conduct](https://github.com/nieve-consulting/lumi-docs/blob/main/CODE_OF_CONDUCT.md). Report security problems privately, as [Reporting vulnerabilities](/security/reporting-vulnerabilities) describes, never in an issue.
+
+## Contributing to the docs
+
+The docs live in the public [`nieve-consulting/lumi-docs`](https://github.com/nieve-consulting/lumi-docs) repository. You don't need access to Lumi's code to build and preview them. The repository's [CONTRIBUTING guide](https://github.com/nieve-consulting/lumi-docs/blob/main/CONTRIBUTING.md) has the details, including how pages, navigation and diagrams work.
+
+For a small fix, open a pull request directly. For a new page or a larger change, open an issue first saying who the page is for and what they need to achieve, so maintainers can check it fits the docs' structure.
+
+### Preview your change
+
+You need Node.js (the version in the repository's `.nvmrc`) and [pnpm](https://pnpm.io).
+
+<Steps>
+<Step>
+
+Fork the repository, then clone your fork and install its dependencies:
+
+```sh
+git clone https://github.com/<your-account>/lumi-docs.git
+cd lumi-docs
+pnpm install
+```
+
+</Step>
+<Step>
+
+Start the site. It serves at `http://localhost:3000` and reloads as you edit:
+
+```sh
+pnpm dev
+```
+
+</Step>
+<Step>
+
+Edit or add pages under `content/docs`. A page's path is its URL, and each folder's `meta.json` orders its pages in the sidebar.
+
+</Step>
+<Step>
+
+Run the checks, which CI also runs on every pull request. `pnpm check` verifies every internal link and heading anchor and parses every diagram:
+
+```sh
+pnpm lint
+pnpm types:check
+pnpm check
+pnpm build
+```
+
+</Step>
+<Step>
+
+Open a pull request against `main`, with a [Conventional Commits](https://www.conventionalcommits.org) title such as `docs(configuration): explain the setup token`. Each pull request gets a preview deployment, linked from the pull request; for pull requests from forks, a maintainer approves the preview build first. Once merged, the change is live within minutes, independently of Lumi's releases.
+
+</Step>
+</Steps>
+
+### Writing guidelines
+
+- Describe what Lumi does today, checked against its code. Leave out features that aren't built yet rather than writing placeholders.
+- Write for businesses and agencies evaluating, installing or running Lumi, in plain English.
+- Use fictional examples, such as `lumi.example.com`. Never include credentials, real conversations, personal data or private business material.
+
+### Licensing
+
+Documentation content is licensed under [CC BY 4.0](https://github.com/nieve-consulting/lumi-docs/blob/main/LICENSE-docs); the site's source code and the code samples in pages under [MIT-0](https://github.com/nieve-consulting/lumi-docs/blob/main/LICENSE), so you can copy samples into your installation without attribution. Excerpts of Lumi's own source code stay under AGPL v3. Contributions are provided under the license of the part being changed. Submit only material you have the right to contribute, and identify third-party material and its license. Contributing doesn't transfer your copyright to Nieve.
+
+## Contributing to Lumi
+
+Contributions to Lumi's code go through its repository. Documentation, installation feedback, accessibility improvements and focused bug fixes are especially valuable. To run Lumi locally, start with [Getting started](/getting-started).
+
+### Proposing a change
+
+- Search the existing issues first, and discuss substantial changes before implementing them, so maintainers can assess their scope and compatibility.
+- Explain who needs the change, what they want to achieve and why it matters, and describe the acceptance criteria as observable outcomes.
+- Use fictional examples. Never include credentials, customer conversations or private business material.
+
+### Workflow
+
+<Steps>
+<Step>
+
+Fork the repository and create a focused branch.
+
+</Step>
+<Step>
+
+Follow the repository's `AGENTS.md` and the guide for each area you change (`frontend/`, `backend/`, `widget/`). They record the conventions for people and coding agents alike.
+
+</Step>
+<Step>
+
+Make a focused change, and update the documentation it affects. A user-facing change comes with a matching update to these docs, in a pull request on `lumi-docs`.
+
+</Step>
+<Step>
+
+Run the checks below and verify the affected behaviour by hand.
+
+</Step>
+<Step>
+
+Open a pull request describing the problem, the resulting behaviour, how you verified it and its limitations, with screenshots for visible interface changes.
+
+</Step>
+</Steps>
+
+Use [Conventional Commits](https://www.conventionalcommits.org), with the affected workspace as scope where it applies, for example `fix(frontend): preserve the selected chat language` or `docs: clarify local setup`.
+
+### Checks
+
+Inspect scripts before running them. Use pnpm for `frontend`, `backend` and `packages/*`; the widget uses npm. Run lint and typecheck in every workspace you change:
+
+```sh
+pnpm -C frontend lint
+pnpm -C frontend typecheck
+pnpm -C backend lint
+pnpm -C backend typecheck
+npm --prefix widget run lint
+npm --prefix widget run typecheck
+```
+
+A change to `packages/shared-contracts` also needs its own typecheck and both the frontend's and backend's lint and typecheck. The project doesn't add or run tests or test frameworks for now, so describe your manual verification clearly.
+
+### Migrations, generated files and releases
+
+- Don't edit database migrations or generated GraphQL files by hand: generate them with the procedures in `backend/AGENTS.md`. A change to the GraphQL type definitions needs both the backend's and the frontend's code generation.
+- Coding agents don't apply database or checkpointer migrations: they hand generated migrations to the developer, and the pull request names them.
+- Releases are made by maintainers. Publishing a release checks that its tag matches the frontend's version, then publishes versioned backend and frontend images to GitHub Container Registry for Linux x86-64 and arm64. It deploys and migrates nothing. Each installation upgrades to a release on its own, as [Operations](/self-hosting/operations) describes.
+
+### Licensing
+
+Contributions are provided under the license of the part being changed: AGPL v3, or the Apache License 2.0 for the widget in `widget/`. Submit only material you have the right to contribute, and identify third-party code and its license. Contributing doesn't transfer your copyright to Nieve. Maintainers may ask for changes or decline work based on the project's direction and their capacity.

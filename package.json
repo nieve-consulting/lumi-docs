@@ -1,0 +1,44 @@
+{
+  "name": "lumi-docs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "pnpm check && next build",
+    "dev": "next dev",
+    "start": "next start",
+    "types:check": "next typegen && tsc --noEmit",
+    "lint": "eslint",
+    "check:links": "node scripts/check-links.mjs",
+    "check:mermaid": "node scripts/check-mermaid.mjs",
+    "check": "pnpm check:links && pnpm check:mermaid"
+  },
+  "dependencies": {
+    "cn": "^0.5.2",
+    "fumadocs-core": "16.19.3",
+    "fumadocs-mdx": "15.6.2",
+    "fumadocs-ui": "npm:@fumadocs/base-ui@16.19.3",
+    "lucide-react": "^1.71.0",
+    "mermaid": "^12.3.0",
+    "next": "16.4.6",
+    "next-themes": "^0.4.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/mdx": "^2.0.14",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "16.4.6",
+    "github-slugger": "^2.0.0",
+    "jsdom": "^31.0.1",
+    "postcss": "^8.5.32",
+    "tailwindcss": "^4.3.5",
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
+  },
+  "license": "MIT-0 AND CC-BY-4.0",
+  "packageManager": "pnpm@12.18.0"
+}

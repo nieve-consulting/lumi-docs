@@ -1,0 +1,398 @@
+---
+title: "Operations"
+description: "Runbooks for checking, monitoring, upgrading, backing up, moving and retiring a Lumi installation, and for deleting data on request."
+---
+
+Runbooks for operating a Lumi installation once it is [installed](/self-hosting): checking and monitoring it, reading its logs, upgrading it, moving its business to another installation, deleting data on request and retiring it. Each step is a command you run, from `deploy/`, on a [Compose installation](/self-hosting). Isolated managed installations run the same containers and commands.
+
+What each store holds, what leaves the installation and what deletion covers are in [Data and privacy](/security/data-and-privacy).
+
+Backups and restores aren't part of Lumi: back up the stores listed in [Where data lives](/security/data-and-privacy#where-data-lives) with your own tooling. For managed installations, the managed service takes and restores the backups.
+
+## Operator commands
+
+The backend image runs these one-off commands, with `docker compose run --rm api <command>`. Each one prints its own help with `--help`.
+
+| Command                | What it does                                                                                                                              |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`               | Reports the version, the database and media storage in use, the schema's migrations and how much data the business holds. Changes nothing |
+| `migrate`              | Applies the pending database migrations                                                                                                   |
+| `export`               | Writes the business's setup and knowledge to a file; see [Moving to another installation](#moving-to-another-installation)                |
+| `import`               | Loads an export into a new installation                                                                                                   |
+| `delete-conversations` | Deletes the conversations you select, with their enquiries and checkpoints; see [Deleting a visitor's data](#deleting-a-visitors-data)    |
+| `admin-reset`          | Creates an admin or resets their password; see [Admin access](/configuration/admin-access#recovery)                                                   |
+| `checkpoint-cleanup`   | Deletes old checkpoint history now instead of on Sunday                                                                                   |
+
+`export` and `import` need `-T`, which keeps Docker from attaching a terminal to the file: `docker compose run --rm -T api export > lumi-export.json`. Without it, `export` stops and shows the command to use.
+
+## Checking an installation
+
+```sh
+docker compose run --rm api status
+```
+
+`status` shows:
+
+- the Lumi version of the images;
+- which database is in use, bundled or your own, its PostgreSQL version and whether pgvector is installed;
+- which media storage is in use, bundled or your own, and whether it answers and has its bucket;
+- the schema migrations applied, the latest one, and any pending;
+- whether the conversation checkpoint tables exist;
+- whether the business is set up, and its name;
+- how many admins and active API keys there are;
+- how many conversations and enquiries it holds, the oldest conversation's last activity, and enquiries not delivered;
+- the records of each knowledge source, and each website's pages, passages and latest crawl;
+- the uploaded images.
+
+It prints no secrets and no visitor details, so you can paste it into a support request. Run it before and after an upgrade, and whenever something looks wrong.
+
+## Monitoring
+
+| Watch                     | How                                                                                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Services are up           | `docker compose ps` shows each one `healthy`. From outside, probe `LUMI_PUBLIC_URL/api/health`: `200` when the web app and the API and agents behind it are healthy, `503` otherwise  |
+| The database is migrated  | The backend services report `schema` and `checkpointer` in their health; see [Health and troubleshooting](/self-hosting#health-and-troubleshooting)                                 |
+| Enquiries reach your team | **Enquiry not delivered** in the admin conversation list, or the undelivered count in `status`. See [When delivery fails](/configuration/handoff#when-delivery-fails)                             |
+| Knowledge stays current   | The **Status** column in **Knowledge → Websites**: **Failed** or **Stopped** crawls need another **Update pages**; see [Knowledge sources](/configuration/knowledge#keeping-the-index-up-to-date) |
+| Spending                  | Your OpenAI account's usage and budget, and the admin dashboard's cost. `LUMI_DAILY_SPEND_LIMIT_USD` stops public conversations for the day when reached                              |
+| Disk                      | The host's free disk: the `postgres-data` volume grows with conversations and crawled pages, `storage-data` with uploaded images, and each service keeps up to 50 MB of logs          |
+| Certificates              | With a domain as `LUMI_SITE_ADDRESS`, the proxy renews them. Check its log if browsers warn                                                                                           |
+| Retention and cleanup     | The worker logs each retention run and checkpoint cleanup: `docker compose logs worker`                                                                                               |
+
+## Logs
+
+Each service writes its log to Docker. Read them with:
+
+```sh
+docker compose logs --since 1h agents
+docker compose logs -f worker
+```
+
+The Compose file keeps up to five 10 MB files per container, so each service's log holds its last 50 MB and older entries are deleted. A container's log is also deleted when the container is removed or recreated, for example by an upgrade or a settings change. To keep logs longer or search them, send them to your own log system with one of [Docker's logging drivers](https://docs.docker.com/engine/logging/configure/): change `x-logging` in a `compose.override.yaml` rather than in `compose.yaml`, so upgrades don't overwrite it.
+
+Logs record errors and operational events, not message content, contact details, passwords or tokens. An error's details can still include fragments of the request that failed, so treat the logs as you treat the database: restrict who can read them, and keep them no longer than your retention policy. A log system you send them to is another store to account for in access and deletion requests. See [Secrets and logs](/security#secrets-and-logs).
+
+## Tracing with Langfuse
+
+[Langfuse](https://langfuse.com) tracing is optional and off unless both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set in `deploy/.env`. When on, it sends conversation content to Langfuse, so turn it on only if your privacy notice covers it; see [Data and privacy](/security/data-and-privacy#copies-outside-the-installation).
+
+- The `agents` service traces each conversation, with the conversation id as the Langfuse session id, including the summaries the team asks for.
+- The web app traces the admin's AI features, translations (`translate-record`) and writing assistance (`improve-text`), with the admin's email as the user.
+- With `LANGFUSE_PROJECT_ID` set, a conversation's page in the admin has an **Open in Langfuse** button that opens its session. Without it the button is hidden.
+
+| Setting                        | Description                                                                                  |
+| ------------------------------ | -------------------------------------------------------------------------------------------- |
+| `LANGFUSE_PUBLIC_KEY`          | Public key of the Langfuse project. Turns tracing on together with the secret key            |
+| `LANGFUSE_SECRET_KEY`          | Secret key of the Langfuse project                                                           |
+| `LANGFUSE_BASE_URL`            | The Langfuse host: `https://cloud.langfuse.com` by default                                   |
+| `LANGFUSE_PROJECT_ID`          | Id of the Langfuse project the installation traces to, from the project's address or settings |
+| `LANGFUSE_TRACING_ENVIRONMENT` | Langfuse environment of the traces: `production` by default in the container installation    |
+
+Apply a change with `docker compose up -d`.
+
+## Upgrades
+
+### Supported versions
+
+| From                                                          | To                | How                                                                                           |
+| ------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------- |
+| Any release published on GitHub since Lumi became open source | Any later release | In one step, with the procedure below. `migrate` applies every migration in between, in order |
+| A release from before Lumi became open source                 | —                 | Not supported. Install a current release and set the business up again                        |
+
+Run the release you upgrade to with the published images for that version, or images you build from its tag. Releases may also need configuration changes: their release notes say so.
+
+### Who does what
+
+- **You** take the backup, pull or build the new images and run `migrate`. Nothing else changes the database's schema: the services never migrate it themselves, and refuse to serve until it is migrated.
+- **`migrate`** applies the pending schema migrations in one transaction, then the conversation checkpoint migrations, and stops if another `migrate` is running.
+- In a **managed installation**, the managed service runs these steps.
+
+### Procedure
+
+1. Read the release notes of every release since yours, for configuration and database changes, and compare `deploy/.env.example` with your `deploy/.env`.
+2. Record where you are:
+
+   ```sh
+   docker compose run --rm api status
+   ```
+
+3. **Take a backup** with your own tooling: the whole database (the `public`, `langgraph` and `drizzle` schemas, consistently, for example while the services are stopped), the media storage and `deploy/.env`; see [Backups](#backups). Check that you can restore it. An upgrade can't be undone without it.
+4. Check out the new release and set `LUMI_VERSION` in `deploy/.env` to it. With published images, keep `LUMI_IMAGE_PREFIX=ghcr.io/nieve-consulting/lumi` and pull both images before stopping any services:
+
+   ```sh
+   git fetch --tags
+   git checkout <release>
+   docker compose pull api frontend
+   ```
+
+   Replace `<release>` with the chosen release tag. For a source build or a release without published images, set `LUMI_IMAGE_PREFIX=lumi` and run `docker compose build` instead of `pull`. Keep the previous image prefix and version with your rollback notes.
+
+5. Stop the services that use the database, apply the migrations and start everything again:
+
+   ```sh
+   docker compose stop frontend agents api worker mcp
+   docker compose run --rm api migrate
+   docker compose up -d
+   ```
+
+6. Check the result: `docker compose ps` shows every service `healthy`, `status` shows the new version and no pending migrations and the same counts as before, and the visitor journey in [Check the visitor journey](/self-hosting#9-check-the-visitor-journey) works.
+
+Visitors see the chat unavailable from step 5 until the services are healthy again, usually a minute or two.
+
+### Going back
+
+Migrations aren't undone. After `migrate` has run, the database belongs to the new release:
+
+- **Before `migrate` ran**, for example when the build failed, restore your previous `LUMI_IMAGE_PREFIX` and `LUMI_VERSION` and run `docker compose up -d`. Its images are still on the host.
+- **After `migrate` ran**, the previous release may not work with the migrated database. Only go back to its images if the release notes say its migrations are compatible. Otherwise restore the backup from step 3 and start the previous release. Everything written since the backup, such as new conversations and enquiries, is lost.
+
+If `migrate` fails, see [When an operation fails](#when-an-operation-fails).
+
+## Backups
+
+Lumi takes no backups. Back up the database, the media storage and `deploy/.env` together, so the images the records refer to are in the same backup. A database or storage of your own is backed up with its own tooling; these are the bundled ones. The volumes are named after the Compose project, `lumi` unless you changed it.
+
+Database, while it runs:
+
+```sh
+docker compose exec -T postgres pg_dump -U lumi -d lumi -Fc > lumi-database.dump
+```
+
+Media storage, stopped for the copy so the files are consistent. Image uploads fail and images don't load meanwhile, for as long as the copy takes; everything else keeps working:
+
+```sh
+docker compose stop storage
+docker run --rm -v lumi_storage-data:/data:ro -v "$PWD":/backup alpine tar czf /backup/lumi-storage.tar.gz -C /data .
+docker compose start storage
+```
+
+To restore, stop the services, load the dump into an empty database with `pg_restore`, unpack the archive into an empty `storage-data` volume, and start the services. Try a restore before you depend on it.
+
+## Moving to your own database or storage
+
+An installation can move from a bundled service to one you run, without reinstalling. Take a [backup](#backups) first. [Database and storage](/self-hosting#database-and-storage) describes what your service needs.
+
+### Database
+
+1. Create the database and its user on your server, and install pgvector in that database with `CREATE EXTENSION vector;`, run by an administrator if your user may not.
+2. Stop the services that use the database, and copy it with the bundled database's own tools. The copy leaves pgvector out, as your database has it already: restoring it would need its owner.
+
+   ```sh
+   docker compose stop frontend agents api worker mcp
+   docker compose exec -T postgres pg_dump -U lumi -d lumi --no-owner --no-privileges --exclude-extension=vector -Fc > lumi-database.dump
+   docker compose exec -T postgres pg_restore --no-owner --no-privileges --exit-on-error \
+     -d "postgresql://USER:PASSWORD@HOST:5432/DATABASE?sslmode=require" < lumi-database.dump
+   ```
+
+3. In `deploy/.env`, set `DB_HOST` and the other `DB_*` settings, then start:
+
+   ```sh
+   docker compose up -d
+   docker compose run --rm api status
+   ```
+
+   `up` removes the bundled database's container. `status` names your database and shows the same counts as before.
+
+4. The old data stays in the `postgres-data` volume until you delete it with `docker volume rm lumi_postgres-data`, once you no longer need it to go back.
+
+### Media storage
+
+Images keep their keys, so they are copied as they are. With the AWS CLI's image, which reaches the bundled storage on the installation's storage network:
+
+1. Create the bucket in your storage, with the CORS rule and access key in [Media storage](/self-hosting#media-storage).
+2. Copy the images out of the bundled storage, then into yours. Leave `--endpoint-url` out of the second command for AWS S3:
+
+   ```sh
+   docker run --rm --network lumi_storage -v "$PWD/lumi-media:/media" \
+     -e AWS_ACCESS_KEY_ID=lumi -e AWS_SECRET_ACCESS_KEY=<LUMI_STORAGE_SECRET_KEY> -e AWS_DEFAULT_REGION=us-east-1 \
+     amazon/aws-cli s3 sync s3://lumi-media /media --endpoint-url http://storage:8333
+   docker run --rm -v "$PWD/lumi-media:/media" \
+     -e AWS_ACCESS_KEY_ID=<your key> -e AWS_SECRET_ACCESS_KEY=<your secret> -e AWS_DEFAULT_REGION=<your region> \
+     amazon/aws-cli s3 sync /media s3://<your bucket> --endpoint-url <your endpoint>
+   ```
+
+3. In `deploy/.env`, set `S3_UPLOADS_BUCKET_NAME` and the other `S3_*` settings, run `docker compose up -d`, and check **Media storage** in `status` and an image in the admin.
+4. Delete the `lumi-media` folder, and the `storage-data` volume with `docker volume rm lumi_storage-data` once you no longer need it to go back.
+
+## Moving to another installation
+
+`export` writes the business's setup and knowledge to one file, and `import` loads it into a new installation. Use it to move to another host or provider, or from a managed installation to your own. [Export](/security/data-and-privacy#export) lists what the file holds. Conversations and enquiries don't move: they stay with the original installation, which you keep or retire.
+
+### Export
+
+From `deploy/` on the installation you're moving from:
+
+```sh
+docker compose run --rm -T api export > lumi-export.json
+```
+
+The command writes the file to its output and prints its progress and a summary of what it included. It reads one consistent snapshot, so the installation can keep running. Options:
+
+- `--include-secrets` also includes the webhook delivery channels' signing secrets. Without it, you add those channels again after the import.
+- `--without-media` leaves the uploaded images out, for example when the installation has no media storage configured anymore. Records keep their image references, and the images show as missing until an admin uploads them again.
+
+Only the images that records and settings use are exported; images that were replaced or never saved are left out. An image missing from your media storage, or that the storage refuses to read, is named in a warning and left out, and the export carries on. If the storage refuses every image, the export stops: check its credentials. `export` refuses an installation with pending migrations: run `migrate` first.
+
+`import` holds the whole file in memory, and the images decoded from it, so it needs free memory of about twice the file's size.
+
+Keep the file private, as [Export](/security/data-and-privacy#export) explains, and delete it once you no longer need it.
+
+### Import
+
+The new installation must run **the same Lumi release** as the one that made the export: the file records it, and `import` refuses a file from another release. To move to a newer release, import into the same release, then [upgrade](#upgrades).
+
+1. Install Lumi on the new host with [Self-hosting](/self-hosting) steps 1 to 5, at the export's release. Don't open the onboarding wizard: the import sets the business up.
+2. Check the file against the installation. The dry run writes every row in a transaction it then rolls back, and checks that media storage accepts files by writing and deleting a small test file, so it catches what the real import would. It imports nothing and uploads none of the images:
+
+   ```sh
+   docker compose run --rm -T api import --dry-run < lumi-export.json
+   ```
+
+3. Import it:
+
+   ```sh
+   docker compose run --rm -T api import < lumi-export.json
+   ```
+
+   The import writes every row in one transaction: if anything fails, the database is left as it was.
+
+4. Create your admin account, since the wizard doesn't run on an installation that is set up, and recreate the web app, which keeps pages and settings it rendered for up to an hour. The backend services read the imported business within 30 seconds.
+
+   ```sh
+   docker compose run --rm api admin-reset you@example.com --name "Your Name"
+   docker compose up -d --force-recreate frontend
+   ```
+
+   The import lists these steps when it finishes, with the websites and webhook channels that concern you.
+
+5. Sign in and finish the move:
+   - **Knowledge → Websites**: choose **Update pages** on each website. The export holds the websites but not their pages, so the chat can't search them until they are crawled again.
+   - **Settings → Enquiries & booking**: add again any webhook channel the import named, with your receiver's signing secret.
+   - Create new [API keys](/developers/api-keys) for your other systems, and reconnect your MCP clients: neither moves with the export.
+   - If the address changed, update the widget's script on your website and any `LUMI_PUBLIC_URL` in your other systems.
+6. Run [Check the visitor journey](/self-hosting#9-check-the-visitor-journey).
+
+`import` only loads into a new installation: it refuses one that is already set up or holds knowledge, and names what it found. To start an import again, remove the new installation with `docker compose down -v` and install it again.
+
+### The export format
+
+The file is a JSON document:
+
+| Field                     | What it holds                                                                                                         |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `format`, `formatVersion` | `"lumi-export"` and `1`: the layout of the file. A release that changes the layout changes the version                |
+| `lumiVersion`             | The release that made it                                                                                              |
+| `schema`                  | The latest database migration of that release (`migration`, the migration's name, and `when`). Rows match that schema |
+| `exportedAt`              | When it was made                                                                                                      |
+| `includesSecrets`         | Whether webhook signing secrets are included                                                                          |
+| `tables`                  | Each table's rows, by database column name, as stored                                                                 |
+| `media`                   | Each uploaded image: its key, content type and its bytes in Base64                                                    |
+
+`import` accepts a file whose `formatVersion` it supports and whose `schema.migration` is the installation's latest migration.
+
+## Deleting a visitor's data
+
+When a visitor asks you to delete their data:
+
+1. **Find their conversations.** `delete-conversations` selects them and, without `--apply`, only lists them:
+
+   ```sh
+   docker compose run --rm api delete-conversations --email visitor@example.com
+   ```
+
+   It matches the email they gave in the chat or in an enquiry form, in any letter case. A visitor who gave no email, or another one, can be found in the admin's **Conversations** by name, phone, topic or date: note each conversation's id from its address, `/admin/conversations/<id>`, and select it with `--thread <id>`, once per conversation.
+
+2. **Delete them**, with the same selection and `--apply`:
+
+   ```sh
+   docker compose run --rm api delete-conversations --email visitor@example.com --apply
+   ```
+
+   Each conversation is deleted with its checkpoints (the message history), enquiries, delivery records and usage. The command reports what it deleted. An admin can also delete a single conversation in **Conversations**, with the same effect.
+
+3. **Delete the copies outside the installation** that [Copies outside the installation](/security/data-and-privacy#copies-outside-the-installation) lists for your configuration: the enquiry emails in your team's mailboxes, the webhook receiver's records, the calendar invitation, and the Langfuse traces, whose session id is the conversation id.
+4. **Account for backups.** The data stays in backups taken before, until they expire; see [Backups](/security/data-and-privacy#backups).
+5. Keep a record of the request and what you deleted, without the deleted data itself.
+
+The visitor's browser still holds the conversation id. When they come back, the chat starts a new conversation.
+
+Selections combine: `--thread` can be given several times, and `--email`, `--thread` and an age (`--older-than <days>` or `--before <YYYY-MM-DD>`) together select the conversations matching all of them. `--before` counts in UTC. A deletion that stops part-way keeps what it deleted: run it again to finish.
+
+Delete a conversation once the visitor has left it. If its chat is still answering, the reply can save its message history after the deletion. The weekly checkpoint cleanup removes such leftovers, and `checkpoint-cleanup --apply` does it at once.
+
+## Retention
+
+To keep conversations only for a limited time, set the number of days in `deploy/.env` and recreate the worker:
+
+```sh
+# deploy/.env
+CONVERSATION_RETENTION_DAYS=365
+```
+
+```sh
+docker compose up -d worker
+```
+
+Every day at 02:30 UTC, the worker deletes the conversations whose last activity (their latest message or enquiry) is older than that, as `delete-conversations --apply` would, and logs how many. A day's run that doesn't finish continues the next day. A conversation the visitor writes in while the run reaches it counts as active and is kept. To see what the first run will delete, run the same selection by hand:
+
+```sh
+docker compose run --rm api delete-conversations --older-than 365
+```
+
+Deleted conversations leave the admin's conversation list, and their cost leaves the dashboard. The separate daily spending total remains, so deletion does not reopen the day's spending allowance. Leave the setting empty, the default, to keep conversations until they are deleted.
+
+Separately, every Sunday at 03:00 UTC the worker deletes old checkpoint history the chat no longer needs, keeping each conversation's latest state. If that day's retention run is still going, the cleanup starts once it has finished. `CHECKPOINT_CLEANUP_SCHEDULE=off` turns it off, and `checkpoint-cleanup` reports, or with `--apply` deletes, what it would delete.
+
+Knowledge, settings and the other data have no automatic retention; see [Retention](/security/data-and-privacy#retention).
+
+## Deleting knowledge
+
+Admins delete knowledge in the admin interface:
+
+- **A record:** delete it on its page. Its translations, its links to other records and its images in media storage go with it. To stop using a record without deleting it, unpublish it.
+- **A website:** **Clear pages** removes its pages and their search passages but keeps the website; deleting the website removes both.
+- **Pages of a website:** add an exclusion that matches them and choose **Update pages**, which removes them once the crawl completes. Pages that disappear from your website or its sitemap are removed the same way.
+
+The chat, the MCP server and the API stop using deleted knowledge from the next request. Check by asking the chat about it. Conversations that quoted it before keep it in their history; see [Deletion](/security/data-and-privacy#deletion).
+
+Images uploaded in the business and resume settings stay in media storage when an admin replaces them. Delete them from the bucket if you must.
+
+## Retiring an installation
+
+To shut an installation down for good:
+
+1. If you're moving, [export](#export) first and check the export with `import --dry-run` on the new installation.
+2. Decide what to keep, such as a final backup, under your retention policy.
+3. Remove the containers and their volumes, which deletes the database and the certificates:
+
+   ```sh
+   docker compose down -v
+   docker image rm <image-prefix>-backend:<version> <image-prefix>-frontend:<version>
+   ```
+
+   Replace `<image-prefix>` with your `LUMI_IMAGE_PREFIX` (`lumi` for local builds, `ghcr.io/nieve-consulting/lumi` for published images).
+
+4. Delete the uploaded images. The bundled storage's went with its volume in step 3; in storage of your own, delete the objects in the bucket, or the bucket. Delete a database of your own as well.
+5. Revoke the credentials in `deploy/.env` with their providers (the OpenAI key, SMTP, the storage key, Google service accounts and OAuth clients, Langfuse keys) and delete the file.
+6. Remove the widget from your website and the installation's DNS record.
+7. Delete or keep, under your policy, the [copies outside the installation](/security/data-and-privacy#copies-outside-the-installation) and your backups.
+
+## When an operation fails
+
+Commands print what went wrong and exit with a non-zero code. None of them leaves the database half-changed, except where this table says so.
+
+| Operation                          | What happens                                                                                       | What to do                                                                                                   |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `migrate`, schema migrations       | None of this run's schema migrations is kept                                                       | Fix the cause it names, such as the database being unreachable, and run `migrate` again                      |
+| `migrate`, daily spending backfill | Schema migrations were applied; the daily spending total may not be initialized | Keep application services stopped, fix the reported cause and run `migrate` again |
+| `migrate`, checkpoint migrations   | The schema migrations were applied; the checkpoint tables are not up to date                       | Run `migrate` again: it applies only what is pending                                                         |
+| `migrate` says another is running  | Nothing was changed                                                                                | Wait for the other one to finish and run it again                                                            |
+| Services unhealthy after `migrate` | `schema` or `checkpointer` still not `ok`                                                          | Run `migrate` again and read its output. If it was the wrong release's `migrate`, check `LUMI_VERSION`       |
+| `export`                           | Nothing in the installation changes. The file may be incomplete                                    | Delete the file, fix the cause and export again. A missing image is reported by key and the export continues |
+| `import` refused                   | Nothing was written: the release doesn't match, the installation isn't new, or the file is invalid | Do what the message says, such as installing the export's release                                            |
+| `import` fails while writing       | The database is rolled back. Images it uploaded stay in media storage                              | Fix the cause and run it again: it uploads the images again over the same keys                               |
+| `delete-conversations`             | The batches deleted before the failure stay deleted                                                | Run the same command again: it deletes what is left                                                          |
+| Retention or checkpoint cleanup    | The worker logs the error                                                                          | The next run continues. To run it now, use `delete-conversations` or `checkpoint-cleanup --apply`            |
+| A website crawl                    | The website's **Status** shows **Failed**, **Stopped** or **Interrupted**                          | See [Keeping the index up to date](/configuration/knowledge#keeping-the-index-up-to-date)                                |
+| An enquiry delivery                | The conversation shows **Enquiry not delivered**                                                   | See [When delivery fails](/configuration/handoff#when-delivery-fails)                                                    |
+| An upgrade                         | The services don't come up, or the chat misbehaves                                                 | Read [Going back](#going-back)                                                                               |

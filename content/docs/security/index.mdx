@@ -1,0 +1,121 @@
+---
+title: "Security"
+description: "Lumi's trust boundaries, what visitors can reach, its abuse and spending limits, outbound request guards and the checklist to work through before going public."
+---
+
+How a Lumi installation separates what the public can reach from what the team administers, the limits that protect it from abuse and runaway spending, and what an operator must do before exposing it. It covers one business per installation. It is not a multi-tenant isolation review, a penetration test or a compliance certification. To report a vulnerability, follow [SECURITY.md](/security/reporting-vulnerabilities).
+
+## Trust boundaries
+
+| Who or what                           | Reaches                                                                                                 | How it is authorized                                                                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Visitor (public chat, widget)         | The public agents API (`/agents`): start a conversation, send messages, book a meeting, send an enquiry | Nobody signs in. A conversation is identified by its id, a random UUID the browser keeps; see [Conversation ownership](#what-visitors-can-reach)               |
+| Website embedding the widget          | The `/widget` page in an iframe, the page address and title it reports                                  | Nothing it reports is trusted: page addresses are only read on the business's own sites, titles are marked as visitor-supplied                                |
+| Admin                                 | The admin interface and its server actions                                                              | A session checked on every admin request and operation by the web app's server ([Admin access](/configuration/admin-access))                                              |
+| Web app's server                      | The GraphQL API (`api`), the agents API's `/admin` routes                                               | The shared `LUMI_API_KEY`, compared in constant time. On the private network only: the proxy refuses to pass it on, and these services aren't published       |
+| Other systems, such as a website      | The GraphQL API and PDF rendering, through the proxy (`/graphql`, `/pdf`)                               | An [API key](/developers/api-keys) an admin generated: read-only (published data only) or admin. Stored as a hash, revocable, checked on every request                 |
+| MCP client, anonymous                 | The MCP server's public tools                                                                           | None; the tools always run with public visibility, whatever token is sent                                                                                     |
+| MCP client, signed in                 | Team tools (read unpublished records, write)                                                            | OAuth with PKCE; the token's scope and the admin's current account or group membership are checked on every call ([MCP server](/developers/mcp-server)) |
+| Worker                                | Crawls the websites admins add                                                                          | Started by the GraphQL API (`api`) with the internal API key, when an admin updates a website                                                                |
+| OpenAI and other enabled integrations | What each call sends them; see [Outbound requests](#outbound-requests)                                  | Credentials held by the backend services only                                                                                                                 |
+
+The GraphQL API trusts whoever holds `LUMI_API_KEY` completely: the key is an administrator credential. Keep it on the web app's server and the backend services. Never give it to a browser or another system: create an [API key](/developers/api-keys) for that system instead.
+
+**API keys.** The GraphQL API enforces each generated key's access on the server, whatever the request asks for. A read-only key can only run an allowlist of queries for published records and public business information, and only select the fields allowed for it, which leave out staff-only ones such as a client's internal page. Mutations, every other query (conversations, enquiries, usage, settings, administrators, upload links), staff-only fields and `includeUnpublished` on any field are refused before anything runs, and translations that aren't public (AI drafts and outdated ones) are left out. A query or field added later is refused until it is added to the allowlist. An admin key can do what the admin interface does, except manage API keys and administrators: only the web app's server, acting for a signed-in admin, can create, list or revoke keys, or manage administrators, so an admin key can't sign anyone in. Each generated key may send 3,000 GraphQL requests a minute. PDFs requested with a generated key render without JavaScript, since the PDF browser runs without its sandbox, and only with the page options that can't write files or exhaust memory. Keys are random 256-bit secrets. Lumi keeps only their SHA-256 hash and shows the key once. The agents API's `/admin` routes and the worker refuse generated keys.
+
+## What visitors can reach
+
+**Knowledge.** The assistant answers only from public knowledge: crawled website pages, published records of the structured sources that are turned on, and the company information ([What is public](/configuration/knowledge#what-is-public)). Every tool reads through the same public-visibility services as the MCP server's public tools, which also filter nested records: an unpublished record is reported as not found, exactly like a missing one. Drafts, translation drafts, other conversations, enquiries, settings and usage are never reachable from a conversation.
+
+**Instructions are not authorization.** A visitor, a page the assistant reads or a crawled page can try to override the assistant's instructions. What they can achieve is bounded in code, not in the prompt:
+
+- Every tool the assistant can call is a read-only lookup of public knowledge. None writes, sends or books anything.
+- Bookings and enquiries are separate requests the visitor's browser sends after filling in a form the assistant showed. The server checks that the form was shown in that conversation, validates every field, and delivers only to destinations the admins configured: the enquiry's email recipients or webhook, the calendars in **Appointment Settings**. A visitor chooses only their own contact details.
+- A booking must be free in the host calendars, within the days and hours of **Appointment Settings**, start on a five-minute mark and last the configured meeting length, and calendar booking must still be turned on. The time needn't be one the picker showed: the picker's times shift when meetings are added, so only these rules are checked. A time that is no longer free has the picker show the others. Every value the visitor entered is escaped in the hosts' email.
+- The assistant reads the visitor's current page only when its host is the business website or a crawled website. It never fetches an address the model chose, and the page's text reaches the model marked as content, not instructions.
+- Administrative operations aren't exposed to the assistant at all: they need an admin session, the internal API key or an admin API key.
+
+**Conversation ownership.** A conversation's id is a random UUID (122 random bits) that the visitor's browser keeps. Anyone holding it can read that conversation, including the contact details the visitor entered, and continue it. Ids can't be guessed or listed through public routes, and Lumi doesn't log them in request addresses. Treat a leaked id like a leaked link to the conversation; see [Residual limitations](#residual-limitations).
+
+**Errors.** Public routes answer generic errors. Database, provider and tool errors stay in the logs and traces and never reach the visitor's browser.
+
+## Limits
+
+The public agents API limits each visitor address and each conversation. The installation reads the client address that the bundled proxy sets. Limits are counted in the database, so they hold across every agents container.
+
+| What                                     | Default                                                 | Setting                              | What the visitor sees                                                                                    |
+| ---------------------------------------- | ------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| Chat messages                            | 20 per minute per address                               | `LUMI_CHAT_TURNS_PER_MINUTE`         | They're sending messages too quickly and should wait a minute                                            |
+| New conversations                        | 10 per minute per address                               | `LUMI_CHAT_THREADS_PER_MINUTE`       | As above                                                                                                 |
+| Bookings and enquiries                   | 5 per hour per address, together                        | `LUMI_HANDOFFS_PER_HOUR`             | Too many requests, wait and try again. Their details stay in the form                                    |
+| Visitor messages in one conversation     | 50                                                      | `LUMI_MAX_MESSAGES_PER_CONVERSATION` | The conversation reached its limit, with a way to start a new one                                        |
+| Messages after a booking or enquiry      | None: the conversation has ended                        | —                                    | The conversation has ended, with a way to start a new one                                                |
+| Model spending per UTC day, all visitors | No limit                                                | `LUMI_DAILY_SPEND_LIMIT_USD`         | The assistant isn't available right now, with the business's contact details. It comes back the next day |
+| Message length                           | 4,000 characters                                        | —                                    | The message box asks them to shorten it before sending                                                   |
+| Booking and enquiry fields               | Name 100, email 254, phone 40, message 4,000…           | —                                    | The form says which field is too long                                                                    |
+| Tool calls per reply                     | 4 rounds                                                | —                                    | The assistant answers with what it found                                                                 |
+| Reading the visitor's page               | 8 seconds, 2 MB, 3 redirects, 16,000 characters of text | —                                    | The assistant says it can't see the page                                                                 |
+
+Set a limit to `0` to turn it off. Every setting is optional: in the container installation, set it in `deploy/.env` and run `docker compose up -d`. A value that isn't a whole number (or, for spending, a positive amount) stops the `agents` service with an error naming it. An IPv6 visitor is counted by their `/64` network, as one subscriber usually gets a whole one. A booking counts once it is checked against the host calendars, whether or not the time is free; an enquiry counts once it is sent, and sending the same enquiry again after no channel accepted it doesn't count again.
+
+Spending is the cost Lumi records for conversations' model calls (replies, their helper calls and embeddings, and the summaries the team asks for) at the prices in `backend/src/ai/pricing.ts` in Lumi's source; a model without a price counts as nothing. It is checked before each conversation and message, at most a minute out of date, and a reply's cost is recorded when it ends: the replies running when the limit is reached can take it slightly over. Admin writing assistance, translations and crawls neither count nor are refused. **Also set a monthly budget in your OpenAI account**: it is the only limit that covers every use of the key.
+
+The limit uses a separate total for each UTC day. Deleting a conversation, manually or through retention, removes its detailed usage from the dashboard but does not reduce this total or reopen the spending allowance. These totals contain only a date and a cost, with no visitor or conversation identifiers. They stay on the installation and are not included in business exports.
+
+When upgrading from a release without these totals, `migrate` seeds today's total from the conversation usage still stored in the database. Costs deleted before that upgrade cannot be recovered. Stop the application services before migrating, as the [upgrade procedure](/self-hosting/operations#upgrades) describes.
+
+Other limits:
+
+- **Admin sign-in:** 10 failed attempts per 15 minutes per email and per client address ([Admin access](/configuration/admin-access#passwords)).
+- **MCP server:** per minute, 600 anonymous calls per address, 120 per signed-in admin, and lower limits on its OAuth endpoints. Exceeding them answers `429` with `Retry-After` ([MCP server](/developers/mcp-server)).
+- **API keys:** each generated key may send 3,000 GraphQL requests a minute. In the container installation, each client address may also send 3,000 requests a minute to `/graphql` and `/pdf` together through the proxy, counted before the key is looked up. Exceeding them answers `429` with `Retry-After` ([API keys](/developers/api-keys#calling-the-api)).
+- **Website crawls:** admins only, with the limits in [Knowledge sources](/configuration/knowledge#limits).
+- **Resume PDFs:** each client address other than a signed-in admin's may download 10 resumes a minute, answering `429` with `Retry-After` past that. The container renders two at a time and answers `503` once 20 are waiting.
+- **Request bodies:** 10 MB.
+
+## Outbound requests
+
+Every request to an address that an admin, a visitor or an MCP client influences goes through one guarded client (`backend/src/utils/safeFetch.ts` in Lumi's source): only `http`/`https` on the default ports and without credentials; every address the host resolves to must be public, and the connection uses the address that was checked; redirects are followed manually and checked again (webhooks follow none and require `https`); no cookies or authorization headers are sent; time, size and content types are bounded. This covers website crawls and their sitemaps, reading the visitor's page, the MCP project-draft tool, MCP client metadata and enquiry webhooks. [Safe fetching](/configuration/knowledge#safe-fetching) describes the rules in detail.
+
+The resume PDF renderer only loads inline data, the web app's own address, the Tailwind script from `cdn.tailwindcss.com` and images from public `https` addresses (a resume logo may be hosted elsewhere); it blocks every other request. Markdown in team member profiles is rendered without raw HTML. A profile therefore can't make the renderer fetch internal addresses.
+
+Every destination Lumi contacts, and when, is in [Outbound connections](/self-hosting#outbound-connections). There is no telemetry, analytics or error reporting. Langfuse tracing is off unless both its keys are set; when on, it receives full conversations, including contact details and the text of pages the assistant read.
+
+## Secrets and logs
+
+- Services refuse to start, or report themselves misconfigured, when a secret still has a `deploy/.env.example` placeholder or is too short: `LUMI_API_KEY` and `MCP_TOKEN_SECRET` need at least 32 characters, `NEXTAUTH_SECRET` 32 and `LUMI_SETUP_TOKEN` 16.
+- Credentials stay in the backend services and the web app's server. The only setting compiled into the browser code is the agents API's address. Webhook secrets and passwords are never sent back to the admin interface.
+- Logs record errors and operational events. They don't record message content, contact details, passwords, tokens or conversation ids in request addresses, but an error's details can include fragments of the request that failed: restrict access to logs like access to the database. Production images run with `NODE_ENV=production`, which keeps GraphQL introspection, stack traces and request logging off. Request logging elsewhere leaves out passwords and secrets, such as a new API key or a webhook's signing secret.
+- Responses carry `X-Content-Type-Options: nosniff`. Pages other than `/widget` can't be framed by other sites, and the proxy sends `Strict-Transport-Security` over HTTPS. Admins can only upload raster images (JPEG, PNG, WebP, GIF, AVIF), and media is served only as those.
+
+## Residual limitations
+
+- **Conversation ids are bearer credentials.** There is no per-visitor secret beyond the id. Shared devices, screenshots of the browser's storage or traces can expose a conversation.
+- **The internal API key is all-powerful.** Any holder of `LUMI_API_KEY` can do what an admin can, including creating admins and API keys, and it can only be changed by redeploying. It is meant only for the web app's server and Lumi's services; in the container installation the proxy refuses it.
+- **Admin API keys** can do what an admin can, except manage API keys and administrators. Give one only to a system you trust like an admin, and prefer read-only keys.
+- **Limits per address.** Visitors behind the same address (an office, a carrier's NAT) share the limits, and an attacker with many addresses can exceed them. The daily spending limit and your OpenAI budget bound the total cost.
+- **Admin sign-in lockout.** Anyone who knows an admin's email can keep it locked for 15 minutes at a time by failing sign-ins. An operator can clear it with `admin-reset`.
+- **Behind your own proxy,** the client address is the first `X-Forwarded-For` entry. Your proxy must replace any `X-Forwarded-For` a client sends; otherwise visitors can choose their address and evade per-address limits.
+- **Booking invitations** go to the email address the visitor typed, without confirming it. The per-address limit and the offered slots bound how often and when.
+- **Restricting tools per stage** of a conversation relies on the model provider honouring the allowed tools. Every tool is read-only, so this only affects what the assistant chooses to look up.
+- **Resume PDFs** load Tailwind from `cdn.tailwindcss.com` while rendering.
+
+## Operator checklist
+
+Before exposing an installation:
+
+- [ ] Serve it over HTTPS (`LUMI_SITE_ADDRESS` set to your domain, or your own TLS proxy as in [TLS and your own proxy](/self-hosting#tls-and-your-own-proxy)).
+- [ ] Generate every secret separately (`openssl rand -hex 32`) and keep `deploy/.env`, the volumes, backups and logs readable only by the operators.
+- [ ] Publish only the proxy. Never expose the `api`, `agents`, `mcp`, `worker` or `postgres` ports.
+- [ ] Behind your own proxy, set `LUMI_TRUSTED_PROXIES` and make sure that proxy replaces a client's `X-Forwarded-For`.
+- [ ] Remove `LUMI_SETUP_TOKEN` once the setup is complete.
+- [ ] Set `MCP_ALLOWED_REDIRECT_ORIGINS` to the MCP clients you use.
+- [ ] Set a monthly budget in your OpenAI account, and consider `LUMI_DAILY_SPEND_LIMIT_USD`.
+- [ ] Review the limits above for your expected traffic.
+- [ ] Check what is public: ask the chat about an unpublished record and a page outside your crawled websites, and check that it can't answer.
+- [ ] Add only websites whose every page you are happy for the chat to quote, with exclusions for the rest.
+- [ ] Turn on Langfuse only if your privacy notice covers sending conversations to it.
+- [ ] Tell visitors who operates the assistant and what it collects ([Data and privacy](/security/data-and-privacy)).
+- [ ] Keep `LUMI_API_KEY` on the web app's server and Lumi's services. Give every other system its own [API key](/developers/api-keys), read-only unless it must change things, and revoke keys that are no longer used.
+- [ ] Keep the host, Docker and Lumi updated, following [Upgrades](/self-hosting/operations#upgrades).
+- [ ] Back up the database, media storage and `deploy/.env` with your own tooling, and decide how long you keep conversations (`CONVERSATION_RETENTION_DAYS`) and backups ([Retention](/security/data-and-privacy#retention)).

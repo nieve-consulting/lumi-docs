@@ -1,0 +1,360 @@
+---
+title: "Self-hosting Lumi"
+description: "Install a complete Lumi installation for one business on a host you control with Docker Compose, and configure, check and secure it."
+---
+
+This guide installs a complete Lumi on a host you control, with Docker Compose. It covers the web app, the widget, the backend services, the background worker, the database and the storage for uploaded images. The database and the storage are bundled, or ones you already run: see [Database and storage](#database-and-storage). One installation serves one business. It needs no AWS account, Google Workspace or tracing account: only an OpenAI API key and a host with Docker.
+
+For development on Lumi itself, see [Getting started](/getting-started).
+
+## What runs
+
+`deploy/compose.yaml` in Lumi's source, with its services in `compose.services.yaml`, starts up to eight services on a private network. Only the proxy publishes ports.
+
+| Service    | Image                          | What it does                                                                                                                                                                                     | Port (internal) |
+| ---------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
+| `proxy`    | `caddy:2.11-alpine`            | The only public entry: TLS, `/agents` to the agents API, `/graphql` and `/pdf` to the API, the MCP paths to the MCP server, image uploads to the bundled storage, everything else to the web app | 80, 443         |
+| `frontend` | `lumi-frontend:<version>`      | Web app: public chat, `/widget` page, widget script, onboarding wizard and admin interface                                                                                                       | 3000            |
+| `agents`   | `lumi-backend:<version>`       | Streaming conversations with the assistant, enquiries and booking                                                                                                                                | 4200            |
+| `mcp`      | `lumi-backend:<version>`       | The [MCP server](#mcp-server): Lumi's knowledge as tools for ChatGPT and other MCP clients                                                                                                       | 4300            |
+| `api`      | `lumi-backend:<version>`       | GraphQL API and PDF resumes, for the web app's server and, with [API keys](/developers/api-keys), your other systems. Also runs the operator commands                                                     | 4000            |
+| `worker`   | `lumi-backend:<version>`       | Background work: website crawls, the weekly cleanup of conversation checkpoints and the optional conversation retention                                                                          | 4500            |
+| `postgres` | `pgvector/pgvector:0.8.7-pg18` | PostgreSQL 18 with pgvector: everything Lumi stores. Not started with a database of your own                                                                                                     | 5432            |
+| `storage`  | `chrislusf/seaweedfs:4.53`     | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for uploaded images. Not started with storage of your own                                                             | 8333            |
+
+The widget isn't a separate service: the web app serves its script at `/scripts/lumi-widget.bundle.umd.js`, and the chat it opens is the web app's `/widget` page.
+
+## Requirements
+
+- A Linux host (x86-64 or arm64) with Docker Engine 24 or later and Docker Compose 2.24 or later, which the choice of bundled or external services needs. Docker Desktop works for a local trial.
+- At least 2 CPU cores, 4 GB of memory and 20 GB of free disk. Building the images needs about 4 GB of memory on top of what is running.
+- For a public installation: a domain name pointing at the host, and ports 80 and 443 reachable from the internet, so the proxy can obtain a certificate. Alternatively, run it behind a TLS-terminating proxy or load balancer of your own; see [TLS and your own proxy](#tls-and-your-own-proxy).
+- An OpenAI API key with access to the models in `backend/src/ai/models.ts` and `frontend/src/lib/models.ts` in Lumi's source.
+- Optionally, an SMTP server to deliver enquiries by email, and a PostgreSQL server or S3-compatible storage of your own in place of the bundled ones.
+
+### Outbound connections
+
+| Destination                                                                               | From                          | When                                                            |
+| ----------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------- |
+| `api.openai.com`                                                                          | agents, api, worker, frontend | Always: replies, knowledge search, indexing, writing assistance |
+| The websites you add as knowledge                                                         | worker                        | When an admin updates a website                                 |
+| The page a visitor is on, when it's on the business website or a crawled website          | agents                        | When the assistant reads the visitor's page during a reply      |
+| `cdn.tailwindcss.com`                                                                     | api                           | Rendering a resume PDF                                          |
+| Your SMTP server                                                                          | agents, api                   | With `SMTP_URL` set                                             |
+| Webhook delivery addresses                                                                | agents                        | With a webhook delivery channel                                 |
+| Your PostgreSQL server                                                                    | agents, api, worker, mcp      | With a database of your own                                     |
+| Your S3-compatible storage                                                                | api, frontend                 | With media storage of your own                                  |
+| `www.googleapis.com`, `oauth2.googleapis.com`                                             | agents, api, frontend, mcp    | With calendar booking or Google Workspace sign-in               |
+| Your Langfuse host (`cloud.langfuse.com` by default)                                      | agents, frontend              | With Langfuse keys set                                          |
+| Let's Encrypt or ZeroSSL                                                                  | proxy                         | With a domain as `LUMI_SITE_ADDRESS`                            |
+| Docker Hub, the npm registry, Debian mirrors, `fonts.googleapis.com`, `fonts.gstatic.com` | Docker, while building        | Building and pulling the images                                 |
+
+Downloading published images also contacts GitHub Container Registry (`ghcr.io`) and its image download endpoints.
+
+Nothing else is contacted: there is no telemetry. Requests to addresses that admins or visitors influence are guarded against reaching private networks; see [Security](/security#outbound-requests).
+
+## Install
+
+### 1. Get the source
+
+Choose a release, usually the latest, and check out its tag; releases are listed on GitHub, at `https://github.com/nieve-consulting/lumi/releases`. Replace `<release>` with its tag.
+
+```sh
+git clone https://github.com/nieve-consulting/lumi.git
+cd lumi
+git checkout <release>
+```
+
+### 2. Configure
+
+```sh
+cd deploy
+cp .env.example .env
+```
+
+Edit `deploy/.env`. `deploy/.env.example` explains each value and the [settings reference](#settings) below lists them all. At minimum, set:
+
+- `LUMI_VERSION` to the release you checked out.
+- `LUMI_PUBLIC_URL` and `LUMI_SITE_ADDRESS`. For `https://lumi.example.com` they are `https://lumi.example.com` and `lumi.example.com`. For a trial on your own computer, use `http://localhost:8080`, `:80` and `LUMI_HTTP_PORT=8080`.
+- `OPENAI_API_KEY`.
+- `POSTGRES_PASSWORD`, `LUMI_STORAGE_SECRET_KEY`, `LUMI_API_KEY`, `NEXTAUTH_SECRET`, `LUMI_SETUP_TOKEN` and `MCP_TOKEN_SECRET`: a different random value each, for example from `openssl rand -hex 32`.
+
+With these, the installation runs its own database and its own storage for uploaded images, and needs nothing else. To use a PostgreSQL server or S3-compatible storage you already run instead, see [Database and storage](#database-and-storage) before going on: the commands below are the same either way.
+
+Keep `deploy/.env` private: it holds the installation's credentials. Git ignores it.
+
+### 3. Build the images
+
+For a release whose **Release** workflow has published both images, you can download them instead of building. Set `LUMI_IMAGE_PREFIX=ghcr.io/nieve-consulting/lumi` and `LUMI_VERSION` to that release number in `deploy/.env`, then run:
+
+```sh
+docker compose pull api frontend
+```
+
+The images support Linux x86-64 and arm64. The backend image is shared by `api`, `agents`, `worker` and `mcp`; the frontend image includes the widget built from the same release source. Wait for both downloads to succeed before continuing. Published tags use the release number without a leading `v`, and there is no floating `latest` tag. Older releases do not gain images retroactively.
+
+If downloads report an unavailable tag or denied access, check that both publishing jobs succeeded and the packages are public. A private package requires an operator with package access to sign in to `ghcr.io`; public packages need no sign-in. You can always build from source instead.
+
+For a source build, keep `LUMI_IMAGE_PREFIX=lumi`:
+
+```sh
+docker compose build
+```
+
+This builds `lumi-backend:<LUMI_VERSION>` and `lumi-frontend:<LUMI_VERSION>` from the checked-out source. It takes several minutes the first time.
+
+### 4. Initialize the database
+
+Create Lumi's tables:
+
+```sh
+docker compose run --rm api migrate
+```
+
+With the bundled database, this starts it first and waits until it accepts connections.
+
+`migrate` applies the application's schema migrations and then the conversation checkpoint migrations, prints what it applied and exits. It applies only what is pending, so running it again is harmless, and two runs never overlap: the second one stops and asks you to try again later. The services never change the database schema themselves.
+
+### 5. Start Lumi
+
+```sh
+docker compose up -d
+docker compose ps
+```
+
+After a minute every service shows `healthy`. If one doesn't, see [Health and troubleshooting](#health-and-troubleshooting).
+
+### 6. Set up the business
+
+Open `LUMI_PUBLIC_URL`. A new installation sends every page to the onboarding wizard:
+
+1. Enter the setup token (`LUMI_SETUP_TOKEN`).
+2. Fill in the business's name, branding, language, contact links, the chat's opening options and the agent guidance; see [Business configuration](/configuration), which includes a complete [example for another business](/configuration#example-a-second-business).
+3. Create the first administrator: your email, an optional name and a password.
+4. Sign in at `/auth/signin`. You can now remove `LUMI_SETUP_TOKEN` from `deploy/.env` and run `docker compose up -d` again.
+
+### 7. Add knowledge and the handoff
+
+In the admin interface:
+
+1. **Knowledge → Websites**: add your website and its sitemap, then choose **Update pages**. The worker crawls it in the background and the **Status** column shows its progress. See [Knowledge sources](/configuration/knowledge) for what is crawled and the limits. Turn off the team, project, client and job opening sources in **Settings** if your business doesn't use them.
+2. **Settings → Enquiries & booking**: set the qualification questions, a booking page and, with email or a webhook, the enquiry form; see [Qualification, booking and enquiries](/configuration/handoff). Email delivery needs `EMAIL_FROM` and `SMTP_URL`.
+
+### 8. Embed the widget
+
+Add the launcher to your website:
+
+```html
+<script src="https://lumi.example.com/scripts/lumi-widget.bundle.umd.js"></script>
+<div id="lumi-widget"></div>
+<script>
+  LumiWidget.init({ selector: "lumi-widget" })
+</script>
+```
+
+If your website has a Content Security Policy, allow `LUMI_PUBLIC_URL` in `script-src`, `frame-src` and `connect-src`. All widget options are in [Embedding the widget](/using-lumi/embedding-the-widget).
+
+### 9. Check the visitor journey
+
+On your website, open the launcher and:
+
+- ask about something your website covers, and check that the answer uses it;
+- ask about something it doesn't cover, and check that the assistant says it doesn't know rather than inventing an answer;
+- ask to talk to the team: follow the booking link, or send an enquiry with fictional details and check it arrives through the delivery channel you set;
+- in the admin interface, find the conversation under **Conversations**.
+
+## Settings
+
+All settings live in `deploy/.env`. Compose stops with a message naming any required setting that is missing. The services check their settings again when they start, and stop with a message saying what to fix, including a secret still set to its `deploy/.env.example` placeholder.
+
+| Setting                                                                                                                                                         | Required                  | Used by           | Description                                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LUMI_IMAGE_PREFIX` | No | Compose | Image-name prefix: `lumi` for local builds (default), or `ghcr.io/nieve-consulting/lumi` for published release images |
+| `LUMI_VERSION` | No | Compose | Tag of the images built and run: set it to the release you checked out. `local` when empty |
+| `LUMI_PUBLIC_URL`                                                                                                                                               | Yes                       | All               | The installation's address, without a trailing slash, e.g. `https://lumi.example.com`. Admin sign-in, links in emails and the allowed origin of the agents API follow it                     |
+| `LUMI_SITE_ADDRESS`                                                                                                                                             | Yes                       | proxy             | `lumi.example.com` for automatic HTTPS, or `:80` for plain HTTP                                                                                                                              |
+| `LUMI_HTTP_PORT`, `LUMI_HTTPS_PORT`                                                                                                                             | No                        | proxy             | Host ports the proxy publishes: `80` and `443` by default                                                                                                                                    |
+| `POSTGRES_PASSWORD`                                                                                                                                             | With the bundled database | postgres, backend | Password of the bundled database. Only read when the database volume is created; see [Changing the database password](#changing-the-database-password)                                       |
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL`, `DB_SSL_CA`, `DB_SSL_REJECT_UNAUTHORIZED`                                                  | No                        | Compose, backend  | A PostgreSQL server of your own. Setting `DB_HOST` chooses it over the bundled database; see [Database](#database)                                                                           |
+| `LUMI_STORAGE_SECRET_KEY`                                                                                                                                       | With the bundled storage  | storage, backend  | Secret key of the bundled storage: a random value, which you can change later                                                                                                                |
+| `LUMI_API_KEY`                                                                                                                                                  | Yes                       | frontend, backend | Shared secret the web app's server uses to call the backend services. At least 32 characters. Give other systems an [API key](/developers/api-keys) instead                                           |
+| `OPENAI_API_KEY`                                                                                                                                                | Yes                       | frontend, backend | OpenAI API key                                                                                                                                                                               |
+| `ADMIN_AUTH_PROVIDER` | No | frontend | `local` (email and password) or `workspace` (Google Workspace). `local` by default; see [Admin access](/configuration/admin-access) |
+| `NEXTAUTH_SECRET`                                                                                                                                               | Yes                       | frontend          | Encrypts admin session cookies. At least 32 characters. Changing it signs every admin out                                                                                                    |
+| `MCP_TOKEN_SECRET`                                                                                                                                              | Yes                       | mcp               | Signs the MCP server's OAuth tokens. At least 32 characters. Changing it signs every MCP client out                                                                                          |
+| `LUMI_SETUP_TOKEN`                                                                                                                                              | Until set up              | frontend          | Protects the onboarding wizard, which creates the first admin. At least 16 characters                                                                                                        |
+| `LUMI_SOURCE_URL` | No | frontend | Where the chat links Lumi's source code. Empty links Lumi's own repository. If you run a modified version, the AGPL v3 asks you to offer its source to the people who use it: set this to where you publish it |
+| `EMAIL_FROM`, `SMTP_URL`                                                                                                                                        | No                        | agents, api       | Sender address and SMTP server (`smtp://user:password@host:587`, `smtps://…` for TLS on connect) of enquiry and meeting emails. Without them no email is sent                                |
+| `S3_UPLOADS_BUCKET_NAME`, `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_REGION`, `S3_FORCE_PATH_STYLE`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`                   | No                        | Compose, api      | S3-compatible storage of your own. Setting `S3_UPLOADS_BUCKET_NAME` chooses it over the bundled storage; see [Media storage](#media-storage)                                                 |
+| `GOOGLE_SERVICE_ACCOUNT_CREDENTIALS`                                                                                                                            | No                        | agents, api       | In-chat Google Calendar booking; see [Calendar booking](/configuration/handoff#calendar-booking)                                                                                                         |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ADMIN_ALLOWED_DOMAINS`, `ADMIN_GOOGLE_GROUP`, `GOOGLE_DIRECTORY_CREDENTIALS`, `GOOGLE_DIRECTORY_IMPERSONATED_USER` | With `workspace`          | frontend          | Google Workspace admin sign-in; see [Admin access](/configuration/admin-access#google-workspace-workspace)                                                                                               |
+| `MCP_GOOGLE_CLIENT_ID`, `MCP_GOOGLE_CLIENT_SECRET`, `MCP_WRITE_GOOGLE_GROUP`, `MCP_ALLOWED_REDIRECT_ORIGINS`                                                    | No                        | mcp               | MCP sign-in with Google Workspace, and the clients allowed to sign in; see [MCP server](#mcp-server)                                                                                         |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_PROJECT_ID`, `LANGFUSE_TRACING_ENVIRONMENT`                                        | No                        | agents, frontend  | Langfuse tracing, off unless both keys are set. It sends conversation content to Langfuse; see [Tracing with Langfuse](/self-hosting/operations#tracing-with-langfuse)                                                                                                    |
+| `LUMI_TRUSTED_PROXIES`                                                                                                                                          | No                        | proxy             | Space-separated CIDR ranges of proxies in front of this one; see [TLS and your own proxy](#tls-and-your-own-proxy)                                                                           |
+| `LUMI_CHAT_TURNS_PER_MINUTE`, `LUMI_CHAT_THREADS_PER_MINUTE`, `LUMI_HANDOFFS_PER_HOUR`, `LUMI_MAX_MESSAGES_PER_CONVERSATION`, `LUMI_DAILY_SPEND_LIMIT_USD`      | No                        | agents            | Public conversation limits per visitor address and conversation, and an optional daily spending limit; see [Limits](/security#limits)                                                      |
+| `CHECKPOINT_CLEANUP_SCHEDULE`                                                                                                                                   | No                        | worker            | `on` (default) or `off`: the weekly cleanup of old conversation checkpoints, Sundays at 03:00 UTC                                                                                            |
+| `CONVERSATION_RETENTION_DAYS`                                                                                                                                   | No                        | worker            | Deletes conversations, with their enquiries, once their last activity is older than this many days, daily at 02:30 UTC. Empty (default) keeps them; see [Retention](/self-hosting/operations#retention) |
+
+The business itself (name, branding, language, contacts, agent guidance, knowledge, qualification and handoff) isn't configured in files: admins set it in the wizard and the admin interface, and it is stored in the database.
+
+After changing `deploy/.env`, apply it with `docker compose up -d`, which recreates the services whose settings changed. Settings never need an image rebuild.
+
+## Database and storage
+
+Lumi keeps its records in PostgreSQL and its uploaded images in S3-compatible storage. For each, the installation runs a bundled service unless `deploy/.env` names one you already run, back up and monitor. There is no separate switch: filling in the external settings is the choice. `compose.yaml` stays as it is, the images aren't rebuilt, and every command in this guide is the same in all combinations.
+
+|               | Bundled, when the settings are empty                  | Your own                                                                        |
+| ------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Database      | The `postgres` service and its `postgres-data` volume | `DB_HOST` and the other `DB_*` settings: `postgres` isn't started               |
+| Media storage | The `storage` service and its `storage-data` volume   | `S3_UPLOADS_BUCKET_NAME` and the other `S3_*` settings: `storage` isn't started |
+
+`docker compose run --rm api status` shows which database and storage are in use and whether they work.
+
+Fill in a service's other settings only with the one that chooses it: `DB_*` settings without `DB_HOST`, or `S3_*` settings without `S3_UPLOADS_BUCKET_NAME`, would be ignored, so the services refuse to start and say which. Compose reads `DB_HOST` and `S3_UPLOADS_BUCKET_NAME` from the shell's environment before `deploy/.env`, so one exported in the shell you run `docker compose` from chooses as well.
+
+### Database
+
+**Bundled**, with the `DB_*` settings empty: PostgreSQL 18 with pgvector, in the `postgres-data` volume, with the password `POSTGRES_PASSWORD`.
+
+**Your own**, such as Amazon RDS, Cloud SQL, Supabase or a company database server:
+
+1. Create a database and a user that owns it. The server must offer the [pgvector](https://github.com/pgvector/pgvector) extension, which `migrate` installs with `CREATE EXTENSION vector`. If your user isn't allowed to, have an administrator run that statement in the database first.
+2. In `deploy/.env`, set `DB_HOST`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`; `DB_PORT` when it isn't 5432. `POSTGRES_PASSWORD` is no longer needed. `DB_HOST` is your server's name: `postgres`, the bundled database's, would turn the bundled database off and leave nothing to connect to.
+3. Set `DB_SSL=true` to connect with TLS, which a database outside the host needs. The server's certificate is then verified against the publicly trusted certificate authorities. Many managed databases, Amazon RDS and Supabase among them, use an authority of their own: download its certificate from your provider (for RDS, the [global bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem)) and set `DB_SSL_CA` to it, base64-encoded on one line (`base64 -w0 global-bundle.pem`). Only that authority is then trusted. `DB_SSL_REJECT_UNAUTHORIZED=false` skips the verification instead: the connection is encrypted but can be intercepted.
+4. Run `docker compose run --rm api migrate` and `docker compose up -d`, as in [Install](#install).
+
+The bundled database is PostgreSQL 18, which Lumi is developed with.
+
+### Media storage
+
+Admins upload images: team member photos, project images, client logos and the logos in the business and resume settings. **Bundled**, with the `S3_*` settings empty and a random `LUMI_STORAGE_SECRET_KEY`: the `storage` service runs SeaweedFS and keeps the images in the `storage-data` volume. On first start it creates its bucket and its access key, so there is nothing to set up. Admins' browsers upload through the installation's own address: the proxy forwards `PUT /lumi-media/…` to the storage, which only accepts an upload carrying a short-lived signature the API made for that one file. No other port, domain or CORS rule is involved. If you run [your own proxy](#tls-and-your-own-proxy) in front, it must forward that path like every other, with the original `Host`.
+
+Unlike the database password, `LUMI_STORAGE_SECRET_KEY` can be changed at any time: change it in `deploy/.env` and run `docker compose up -d`. Without a valid key the storage doesn't start, and the `api` service starts without media storage and says why in its log; the chat and the rest of the admin keep working.
+
+The storage is on a network of its own, which only `api`, `frontend` and `proxy` join: SeaweedFS also serves its files on other ports without the key, so the services that handle visitors' messages, MCP clients and crawled websites can't reach it.
+
+**Your own**, such as AWS S3, Cloudflare R2 or MinIO: set `S3_UPLOADS_BUCKET_NAME` and the other `S3_*` settings. Admins' browsers upload to the storage directly, with a short-lived signed address, so:
+
+- The `api` and `frontend` services reach the storage at `S3_ENDPOINT`, and admins' browsers upload to `S3_PUBLIC_ENDPOINT`, which defaults to `S3_ENDPOINT`. Set it when the storage has a different public address, e.g. `S3_ENDPOINT=http://storage.internal:9000` and `S3_PUBLIC_ENDPOINT=https://storage.example.com`. Leave both empty for AWS S3, and set `S3_REGION`.
+- Create the bucket, `S3_UPLOADS_BUCKET_NAME`, yourself. Its CORS rules must allow `PUT` from `LUMI_PUBLIC_URL`.
+- Most S3-compatible servers need `S3_FORCE_PATH_STYLE=true`.
+- The access key needs to read, write and delete objects in the bucket, and nothing else. With a key limited to that on Amazon S3, `status` and the `api` service's start check the storage by writing and deleting a small object under `lumi-access-check/`.
+
+Visitors never reach the storage: the web app serves images at `/media/…`. PDF resumes load their images from `LUMI_PUBLIC_URL`, so on a trial at `http://localhost:8080` they show without images.
+
+To move from a bundled service to your own later, see [Moving to your own database or storage](/self-hosting/operations#moving-to-your-own-database-or-storage).
+
+## TLS and your own proxy
+
+With a domain as `LUMI_SITE_ADDRESS`, the proxy obtains and renews a certificate automatically and redirects HTTP to HTTPS. It keeps the certificates in the `caddy-data` volume.
+
+To terminate TLS elsewhere, for example on a load balancer or a reverse proxy you already run:
+
+1. Set `LUMI_SITE_ADDRESS=:80`, `LUMI_PUBLIC_URL` to the `https://` address visitors use, and `LUMI_HTTP_PORT` to a port your proxy can reach.
+2. Forward every path to that port, with the original `Host`. Don't buffer responses: conversations stream from `/agents`.
+3. Set `LUMI_TRUSTED_PROXIES` to your proxy's address range, so the client address it reports in `X-Forwarded-For` is used. Admin sign-in limits failed attempts per client address. Your proxy must replace any `X-Forwarded-For` a client sends rather than append to it.
+
+Don't expose the other services' ports. The agents API's `/admin` routes and the worker are only for the web app's server and must stay on the private network. Other systems reach the GraphQL API through the proxy, at `/graphql` and `/pdf`, with an [API key](/developers/api-keys). The bundled proxy marks these requests, and the API refuses the internal `LUMI_API_KEY` on them.
+
+## MCP server
+
+The installation includes Lumi's [MCP server](/developers/mcp-server), which offers Lumi's records as tools to ChatGPT and other MCP clients. Its address is `LUMI_PUBLIC_URL/mcp`, for example `https://lumi.example.com/mcp`. The proxy also forwards its OAuth endpoints, `/oauth/…` and `/.well-known/oauth-…`, to it. MCP clients such as ChatGPT only connect over HTTPS.
+
+Anyone can use its public tools without signing in: they answer from the same public knowledge as the chat. Calls are limited per client address.
+
+Admins sign in to use its team tools, which read unpublished records and create, update and publish them. They sign in the same way as to the admin interface, following `ADMIN_AUTH_PROVIDER`:
+
+- **`local`**: when an MCP client connects, Lumi's connection page names the client and what it will be able to do, and asks for the admin's Lumi email and password. Every admin gets read and write access. Failed attempts count toward the [admin sign-in limits](/configuration/admin-access#passwords). An admin with a temporary password must change it in the admin interface first. Changing or resetting an admin's password, or removing the admin, disconnects their MCP clients.
+- **`workspace`**: admins sign in with Google Workspace. Set `MCP_GOOGLE_CLIENT_ID` and `MCP_GOOGLE_CLIENT_SECRET`, a Google OAuth client whose redirect URI is `LUMI_PUBLIC_URL/oauth/callback`. Also set `ADMIN_ALLOWED_DOMAINS`, `ADMIN_GOOGLE_GROUP` and the Directory service account (`GOOGLE_DIRECTORY_CREDENTIALS`, `GOOGLE_DIRECTORY_IMPERSONATED_USER`), as for the admin interface's [Google Workspace sign-in](/configuration/admin-access#google-workspace-workspace). Members of the group get read access; `MCP_WRITE_GOOGLE_GROUP` optionally limits the write tools to another group. Without these settings, only the public tools are available.
+
+Set `MCP_ALLOWED_REDIRECT_ORIGINS` to the MCP clients you use (`deploy/.env.example` sets `https://chatgpt.com`), so that other clients can't complete a sign-in. When it's empty, the `mcp` service logs a warning: any client anyone registers could then ask an admin to sign in and receive their access. Changing `MCP_TOKEN_SECRET` disconnects every client.
+
+## Health and troubleshooting
+
+Each service reports its health, and `docker compose ps` shows it:
+
+| Service                   | Check             | Healthy when                                                                                                                              |
+| ------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres`                | `pg_isready`      | The bundled database accepts connections                                                                                                  |
+| `storage`                 | `GET /healthz`    | The bundled storage answers                                                                                                               |
+| `api`, `agents`, `worker` | `GET /health`     | The database is reachable (`database`), its schema is up to date (`schema`) and the conversation checkpoint tables exist (`checkpointer`) |
+| `frontend`                | `GET /api/health` | Its settings are complete and `api` and `agents` are healthy                                                                              |
+
+The web app's health is public at `LUMI_PUBLIC_URL/api/health`. It only names each check and its state. To see the backend services' detail, run:
+
+```sh
+docker compose exec api node -e "fetch('http://127.0.0.1:4000/health').then(r => r.text()).then(console.log)"
+```
+
+The logs say what to fix: `docker compose logs <service>`.
+
+| Symptom                                                                                                                                             | Cause and fix                                                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker compose` stops with "required variable … is missing a value"                                                                                | A required setting is missing from `deploy/.env`                                                                                                                                                                                                                 |
+| A service restarts repeatedly                                                                                                                       | It found a setting missing or invalid when starting: its log lists each one and how to fix it                                                                                                                                                                    |
+| `api`, `agents` or `worker` unhealthy with `schema` or `checkpointer` `not initialized` or `migrations pending`, and the chat answers an error page | Run `docker compose run --rm api migrate`                                                                                                                                                                                                                        |
+| `database: unreachable` (and the other checks `unknown`)                                                                                            | `postgres` isn't running or healthy, or `POSTGRES_PASSWORD` changed after the volume was created. With your own database: check `DB_HOST`, the credentials, `DB_SSL` and that the server accepts connections from this host; `status` prints the server's answer |
+| `migrate` says pgvector isn't available, or that an extension can't be created                                                                      | Your PostgreSQL server doesn't offer the `vector` extension, or Lumi's user may not install it: see [Database](#database)                                                                                                                                        |
+| Uploading an image fails                                                                                                                            | Run `docker compose run --rm api status`: **Media storage** says whether it is unreachable, refusing the key or missing its bucket. The `api` log says the same when it starts                                                                                   |
+| `storage` restarts repeatedly                                                                                                                       | `LUMI_STORAGE_SECRET_KEY` is empty or still the example value. The `api` log says the same, and images can't be uploaded or shown until it is fixed                                                                                                              |
+| `frontend` unhealthy with `config: misconfigured`                                                                                                   | A web app setting is missing or invalid: its log says which                                                                                                                                                                                                      |
+| The wizard says a setup token is required                                                                                                           | Set `LUMI_SETUP_TOKEN` (at least 16 characters) and run `docker compose up -d`                                                                                                                                                                                   |
+| Chat replies fail with an error                                                                                                                     | Check the `agents` log. An invalid `OPENAI_API_KEY` or one without access to the models is the usual cause                                                                                                                                                       |
+| The widget shows no launcher on your website                                                                                                        | The script must come from `LUMI_PUBLIC_URL`, the business must be set up, and your website's Content Security Policy must allow the installation                                                                                                                 |
+| A website crawl shows **Not started**                                                                                                               | The `worker` wasn't reachable: check that it is healthy and run **Update pages** again                                                                                                                                                                           |
+| No certificate for the domain                                                                                                                       | Check the `proxy` log: the domain must resolve to this host and ports 80 and 443 must be reachable from the internet                                                                                                                                             |
+
+## Data and persistence
+
+Everything Lumi stores is in the database: business settings, admins, knowledge, conversations, enquiries and usage. The bundled database keeps it in the `postgres-data` volume. Uploaded images are in media storage, which with the bundled storage is the `storage-data` volume. The installation's credentials are in `deploy/.env`, and certificates in `caddy-data`. [Data and privacy](/security/data-and-privacy#where-data-lives) lists each store, what it holds and what leaves the installation.
+
+`docker compose restart`, `docker compose down` followed by `up`, recreating containers after a settings change and rebuilding the images all keep the data. **`docker compose down -v` deletes the volumes and everything in them.**
+
+Lumi ships no backup tooling: back up the database (all its schemas), the media storage and `deploy/.env` with your own tools, and keep the backups as private as the database. [Backups](/self-hosting/operations#backups) shows how for the bundled database and storage. After changing the database outside Lumi, for example restoring a backup, run `docker compose up -d --force-recreate frontend`: the web app keeps the pages it rendered for up to an hour.
+
+[Operations](/self-hosting/operations) covers moving the business to another installation, deleting a visitor's data, retention and retiring an installation.
+
+### Changing the database password
+
+`POSTGRES_PASSWORD` is only read when the bundled database's volume is first created. To change it later, change it in the database first, then in `deploy/.env`:
+
+```sh
+docker compose exec postgres psql -U lumi -d lumi -c "ALTER USER lumi PASSWORD 'new-password'"
+docker compose up -d
+```
+
+## Upgrades
+
+Upgrade by building the new release's images and running `migrate` with the services stopped, after taking a backup: [Upgrades](/self-hosting/operations#upgrades) has the procedure, the supported versions and what going back involves.
+
+## Operator commands
+
+The backend image runs these one-off commands with `docker compose run --rm api <command>`:
+
+| Command                                      | What it does                                                                                                                                                                                                     |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`                                     | Reports the version, the database and media storage in use, the migrations applied and pending, and how much data the installation holds; see [Checking an installation](/self-hosting/operations#checking-an-installation) |
+| `migrate`                                    | Applies the pending database migrations; see [Initialize the database](#4-initialize-the-database)                                                                                                               |
+| `admin-reset admin@example.com --name "Ada"` | Creates that admin or resets their password, prints a temporary password once and clears their failed sign-ins; see [Admin access](/configuration/admin-access#recovery)                                                     |
+| `export`, `import`                           | Move the business's setup and knowledge to a new installation; see [Moving to another installation](/self-hosting/operations#moving-to-another-installation)                                                                |
+| `delete-conversations`                       | Lists, or with `--apply` deletes, the conversations of a visitor, by id or by age; see [Deleting a visitor's data](/self-hosting/operations#deleting-a-visitors-data)                                                       |
+| `checkpoint-cleanup`                         | Reports what the weekly checkpoint cleanup would delete. Add `--apply` to delete it now                                                                                                                          |
+
+## API keys
+
+To let another system, such as your website, read your published records from Lumi, an admin creates an API key in **Settings → Developer**. The system calls `LUMI_PUBLIC_URL/graphql` (and `LUMI_PUBLIC_URL/pdf` to render PDFs) with the key in the `Authorization` header. Keys are read-only or admin, and can be revoked at any time; see [API keys](/developers/api-keys).
+
+## What isn't included
+
+- One business per installation. Serve several businesses with one installation each, on separate hosts or as separate Compose projects with their own `deploy/.env`.
+- Backups and restores: back up the stores in [Where data lives](/security/data-and-privacy#where-data-lives) with your own tooling.
+
+## Before going public
+
+Work through the [operator security checklist](/security#operator-checklist). In short:
+
+- Use HTTPS, and keep `deploy/.env`, the volumes and the host restricted to the people operating the installation.
+- Remove `LUMI_SETUP_TOKEN` once the setup is complete.
+- Review what knowledge is public and what enabled integrations transmit; see [Data and privacy](/security/data-and-privacy).
+- Set spending limits in your OpenAI account, and review the [public conversation limits](/security#limits): public conversations use your API key.
+- Keep the host and Docker updated, and upgrade Lumi when releases fix security issues.

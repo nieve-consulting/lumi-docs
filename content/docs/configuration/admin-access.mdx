@@ -1,0 +1,142 @@
+---
+title: "Admin access"
+description: "How admins sign in to Lumi's admin interface with email and password or Google Workspace, and how operators add, limit and recover admin access."
+---
+
+Lumi's admin interface (`/admin`) is where a business's team manages its knowledge, conversations and settings. Website visitors, the public chat, the widget, team member PDF resumes and media never need a sign-in.
+
+Each installation signs its admins in with exactly one method, chosen by the web app's `ADMIN_AUTH_PROVIDER` variable (trimmed, case-insensitive):
+
+| Value       | Sign-in                            | Who is an admin                                           | Needs                                                                      |
+| ----------- | ---------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `local`     | Email and password, stored by Lumi | Every admin account in the installation's database        | `NEXTAUTH_SECRET` and a `LUMI_SETUP_TOKEN` for the first setup             |
+| `workspace` | Google Workspace account           | Members of a Google Group, from allowed Workspace domains | Google OAuth client, Directory service account with domain-wide delegation |
+
+Choose `local` unless your business already runs Google Workspace and wants to manage admins through a Google Group.
+
+**There is no default.** When `ADMIN_AUTH_PROVIDER` is unset or not one of these values, or the chosen method's settings are incomplete, nobody can sign in: the sign-in page says it isn't configured, admin pages show a configuration error, admin operations are refused, and the web app logs an error naming the variable. Missing settings never open the admin. The container installation sets `local` when `deploy/.env` leaves `ADMIN_AUTH_PROVIDER` empty.
+
+## Email and password (`local`)
+
+### Settings
+
+All are server-side variables of the web app:
+
+| Variable              | Description                                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_AUTH_PROVIDER` | `local`                                                                                                       |
+| `NEXTAUTH_URL`        | Canonical URL of the web app, e.g. `https://lumi.example.com`                                                 |
+| `NEXTAUTH_SECRET`     | Random secret that encrypts the session cookie (`openssl rand -base64 32`). Rotating it signs every admin out |
+| `LUMI_SETUP_TOKEN`    | Required until the setup is complete: at least 16 random characters (`openssl rand -base64 32`). See below    |
+
+The accounts are stored in the backend database (`admin_accounts`), so the database migrations must be applied first. Passwords are stored only as scrypt hashes and never logged.
+
+### The first administrator
+
+The onboarding wizard at `/setup` creates the first admin together with the business settings, in one step that either saves both or neither.
+
+In `local` mode the wizard **requires** `LUMI_SETUP_TOKEN`: without a valid token it explains that the operator must set one and can't be completed. This stops a visitor who reaches a new installation before you from claiming it. Give the token only to the person completing the setup. Once the setup is complete, `/setup` is closed for good and can't be used to create another admin; you may then remove the token.
+
+1. Set the variables above and apply them: in the [container installation](/self-hosting) they are in `deploy/.env` (`NEXTAUTH_URL` follows `LUMI_PUBLIC_URL`), applied with `docker compose up -d`.
+2. Open the installation: it sends you to `/setup`. Enter the setup token.
+3. Complete the wizard, including the **Administrator** step: your email, an optional name and a password.
+4. Sign in at `/auth/signin` with that email and password.
+
+If an admin account already exists (for example one created with the recovery script below), the wizard skips the Administrator step.
+
+### More administrators
+
+Admins add and remove other admins in **Settings → Administrators**. A new admin gets a temporary password, shown once to the admin who added them; pass it on through a channel you trust. Lumi sends no email. All admins have the same access. The last admin can't be removed, and admins don't remove themselves.
+
+### Passwords
+
+- 12 to 256 characters, any characters, no complexity rules. Prefer a password manager.
+- A temporary password (from Settings or the recovery script) must be changed at the first sign-in before anything else in the admin is available.
+- Admins change their own password from the user menu (**Change password**), with their current password.
+- Failed sign-ins and wrong current passwords are limited to 10 per 15 minutes for each email and for each client IP address. Past the limit, sign-in answers "Too many failed sign-in attempts" until the window ends. Anyone who knows an admin's email can trigger this for that account, so it can lock a real admin out for up to 15 minutes; the recovery script clears it.
+- The per-IP limit uses the client address the proxy reports (the first `X-Forwarded-For` entry, else `X-Real-IP`). The container installation's proxy sets it, replacing any `X-Forwarded-For` a client sends. Behind a proxy of your own, make sure it overwrites these headers rather than passing on the client's, or the per-IP limit can be evaded (the per-email limit still applies); see [TLS and your own proxy](/self-hosting#tls-and-your-own-proxy).
+
+### Recovery
+
+An operator with database access can always restore access, even when every admin is locked out:
+
+```bash
+pnpm -C backend admin:reset admin@example.com --name "Ada Lovelace"
+```
+
+In the [container installation](/self-hosting), run it from `deploy/` with the backend image instead:
+
+```bash
+docker compose run --rm api admin-reset admin@example.com --name "Ada Lovelace"
+```
+
+It creates the admin if the email has no account, or resets its password otherwise, and prints a temporary password once. It also clears that email's failed sign-ins. The admin signs in with it and must choose a new password. For a deployed database, pass the env file with its connection settings; see the backend README (`backend/README.md` in Lumi's source). The script never applies migrations.
+
+Use the same script to give an installation that is already set up its first admin, for example when moving from `workspace` to `local`: the wizard is closed once the setup is complete.
+
+## Google Workspace (`workspace`)
+
+Set `ADMIN_AUTH_PROVIDER=workspace` together with the Google settings below: the OAuth client, `ADMIN_ALLOWED_DOMAINS`, `ADMIN_GOOGLE_GROUP` and the Directory service account. Admins are the members of the Google Group; manage access in Google, not in Lumi. The onboarding wizard asks for no administrator, and `LUMI_SETUP_TOKEN` stays optional, although it is still recommended for any address the public can reach.
+
+### Workspace settings
+
+All are server-side variables of the web app. In the [container installation](/self-hosting) they are in `deploy/.env`.
+
+| Variable                             | Description                                                                                                                                                                                   |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_AUTH_PROVIDER`                | `workspace`                                                                                                                                                                                   |
+| `NEXTAUTH_URL`                       | Canonical URL of the web app, e.g. `https://lumi.example.com`. The container installation sets it to `LUMI_PUBLIC_URL`                                                                        |
+| `NEXTAUTH_SECRET`                    | Random secret that encrypts the session cookie (`openssl rand -base64 32`). Rotating it signs every admin out                                                                                 |
+| `LUMI_SETUP_TOKEN`                   | Optional: at least 16 characters (`openssl rand -base64 32`), recommended on any address the public can reach                                                                                 |
+| `GOOGLE_CLIENT_ID`                   | Client ID of the Google OAuth web client                                                                                                                                                      |
+| `GOOGLE_CLIENT_SECRET`               | Client secret of the Google OAuth web client                                                                                                                                                  |
+| `ADMIN_ALLOWED_DOMAINS`              | Comma-separated Workspace domains allowed to sign in                                                                                                                                          |
+| `ADMIN_GOOGLE_GROUP`                 | Email or ID of the Google Group whose members are admins                                                                                                                                      |
+| `GOOGLE_DIRECTORY_CREDENTIALS`       | Base64-encoded JSON key of the Directory service account (`base64 -w0 key.json`), separate from the calendar booking account. A value that isn't a base64-encoded JSON key counts as missing |
+| `GOOGLE_DIRECTORY_IMPERSONATED_USER` | Workspace user the service account acts for; must be allowed to read the group's members                                                                                                      |
+
+### Google setup
+
+1. In a Google Cloud project, configure the OAuth consent screen with the **Internal** user type and create an OAuth client of type **Web application**. Add the authorized redirect URI `https://<your host>/api/auth/callback/google`, for example `https://lumi.example.com/api/auth/callback/google`, and one for every other host the web app runs on, such as `http://localhost:8080/api/auth/callback/google` for development.
+2. Enable the **Admin SDK API** and create a dedicated service account with a JSON key.
+3. In the Workspace Admin console (**Security → Access and data control → API controls → Domain-wide delegation**), a super admin authorizes the service account's client ID for the scope `https://www.googleapis.com/auth/admin.directory.group.member.readonly`.
+4. Choose the impersonated user: an account with an admin role that can read the group's members, for example a custom role with the Groups read privilege.
+5. Manage access by adding and removing members of the admin group.
+
+To rotate credentials, create the new OAuth client secret or service account key, update the variables and redeploy (in the container installation, `docker compose up -d`), then delete the old secret or key.
+
+### Who has access
+
+- Admins sign in with their Google account. The account must have a verified email and belong to a Workspace domain in `ADMIN_ALLOWED_DOMAINS`. Accounts from other domains never have access, even when they are members of the group. Lumi keeps no list of admin accounts in this mode.
+- Group membership is checked with Google's Directory at sign-in and again on every admin request. Direct members, and nested members in the group's own domain, have access; members from another allowed domain need a direct membership, as Google only resolves nested membership within a domain.
+- Each server caches a positive membership check for 5 minutes and a negative one for 30 seconds, so a newly added member may wait that long. A removed member loses access at their next admin request once that cache expires and Google's Directory reflects the removal, usually within minutes, sometimes longer. A failed or timed-out check denies access and asks the admin to try again.
+- Suspending a Google account keeps its group memberships: remove the user from the admin group to revoke access right away. Otherwise access ends when their session does.
+
+## What admins and operators see
+
+| Situation                                                      | Outcome                                                                                                                                         |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Not signed in, opening an admin page                           | Sent to the sign-in page, then back to the page after signing in                                                                                |
+| Not signed in or not an admin, calling an admin operation      | Refused (`401` without a session, `403` without admin access); nothing changes                                                                  |
+| Wrong email or password                                        | "Email or password is incorrect", the same whether or not the email has an account                                                              |
+| Too many failed attempts                                       | Sign-in refused until the 15-minute window ends, or until an operator runs the recovery script                                                  |
+| Temporary password                                             | Sent to **Change password** before any admin page or operation                                                                                  |
+| Account removed by another admin                               | Access ends at the next admin request; the session gives no access                                                                              |
+| Signing out (user menu)                                        | The session cookie is cleared; admin pages ask to sign in again                                                                                 |
+| 12 hours after signing in                                      | The session ends, whatever the activity; sign in again                                                                                          |
+| `ADMIN_AUTH_PROVIDER` unset or invalid, or settings incomplete | Sign-in unavailable and admin pages show a configuration error; nobody gets admin access                                                        |
+| Switching `ADMIN_AUTH_PROVIDER`                                | Sessions from the other method stop granting access; everyone signs in again with the new one                                                   |
+| Admin's password changed or reset                              | Every session the account already had ends at its next admin request and must sign in with the new password. Whoever changed it stays signed in |
+
+## API keys
+
+Any admin can create and revoke API keys for other systems, such as a website, in **Settings → Developer**. A key isn't an admin account: it signs nobody in, and it can't manage API keys or administrators. See [API keys](/developers/api-keys).
+
+## MCP server
+
+The MCP server (the ChatGPT connector, see [MCP server](/developers/mcp-server)) signs admins in with the same method as the admin interface:
+
+- `local`: with their Lumi email and password, on Lumi's connection page. All admins get read and write access. Failed attempts count toward the sign-in limits above. Temporary passwords must be changed in the admin interface first. A password change or reset, or removing the account, disconnects the admin's MCP clients at their next tool call.
+- `workspace`: with Google Workspace, and its own Google settings; members of the admin Google Group get access.
+
+Anyone can use its public tools without signing in. In the container installation, it is at `LUMI_PUBLIC_URL/mcp`; see [MCP server](/self-hosting#mcp-server).
