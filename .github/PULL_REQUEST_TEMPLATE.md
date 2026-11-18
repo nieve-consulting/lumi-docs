@@ -4,7 +4,7 @@ Who is this for, what do they need to achieve, and what changes for them? Link t
 
 ## Changes
 
-List the pages added, changed, moved or renamed. Lumi links to pages and heading anchors, so call out any moved page or renamed heading and how its old anchor is kept. State “None” when nothing moved.
+List the pages added, changed, moved or renamed. Lumi links to pages and heading anchors, and releases already installed keep those links, so don't move a page Lumi links to, and keep a renamed heading's old anchor with a custom id (`## New heading [#old-slug]`). Call out any moved page or renamed heading so a maintainer can check it against Lumi's links. State “None” when nothing moved.
 
 ## Verification
 
