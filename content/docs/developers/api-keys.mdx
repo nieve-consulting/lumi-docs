@@ -53,7 +53,7 @@ curl https://lumi.example.com/graphql \
   -d '{"query":"query { projects(language: \"en\") { id name url_slug } }"}'
 ```
 
-The schema is in `backend/src/apollo/schema` in Lumi's source, one `types.gql.ts` per area. Production installations don't answer introspection queries, so generate client types from a checkout of the repository instead.
+The schema is in [`backend/src/apollo/schema`](https://github.com/nieve-consulting/lumi/tree/main/backend/src/apollo/schema) in Lumi's source, one `types.gql.ts` per area. Production installations don't answer introspection queries, so generate client types from a checkout of the repository instead.
 
 `/pdf` takes a `POST` with a JSON body `{ "document": "<html>…", "filename": "resume.pdf" }` and an optional `pdfOptions`, and answers with the PDF. `pdfOptions` may set `format` (`A0` to `A6`, `Letter`, `Legal`, `Tabloid` or `Ledger`), `landscape`, `printBackground`, `scale` (0.1 to 2), `margin` (`top`, `right`, `bottom`, `left` as lengths in `px`, `in`, `cm` or `mm`, such as `10mm`), `pageRanges` (such as `1-5, 8`) and `preferCSSPageSize`; other options are ignored, and an invalid value, or page ranges past the document's last page, gets `400`. Documents sent with a generated key render without JavaScript, so style them with CSS in the document rather than scripts. The page only loads inline data, images over HTTPS from public addresses and Lumi's own resources. The container installation renders two at a time and answers `503` when 20 are waiting.
 

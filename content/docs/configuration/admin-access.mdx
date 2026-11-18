@@ -70,7 +70,7 @@ In the [container installation](/self-hosting), run it from `deploy/` with the b
 docker compose run --rm api admin-reset admin@example.com --name "Ada Lovelace"
 ```
 
-It creates the admin if the email has no account, or resets its password otherwise, and prints a temporary password once. It also clears that email's failed sign-ins. The admin signs in with it and must choose a new password. For a deployed database, pass the env file with its connection settings; see the backend README (`backend/README.md` in Lumi's source). The script never applies migrations.
+It creates the admin if the email has no account, or resets its password otherwise, and prints a temporary password once. It also clears that email's failed sign-ins. The admin signs in with it and must choose a new password. For a deployed database, pass the env file with its connection settings; see the backend README ([`backend/README.md`](https://github.com/nieve-consulting/lumi/blob/main/backend/README.md) in Lumi's source). The script never applies migrations.
 
 Use the same script to give an installation that is already set up its first admin, for example when moving from `workspace` to `local`: the wizard is closed once the setup is complete.
 

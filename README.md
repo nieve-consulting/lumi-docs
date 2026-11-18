@@ -10,7 +10,7 @@ Lumi answers a business's visitors from its own knowledge, checks whether they'r
 
 ## Working on the docs
 
-You need Node.js (the version in `.nvmrc`) and [pnpm](https://pnpm.io). You don't need access to Lumi's source repository to build or preview the site.
+You need Node.js (the version in `.nvmrc`) and [pnpm](https://pnpm.io). You don't need Lumi's source code to build or preview the site.
 
 ```sh
 git clone https://github.com/nieve-consulting/lumi-docs.git

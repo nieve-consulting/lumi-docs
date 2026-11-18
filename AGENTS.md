@@ -31,15 +31,15 @@ Write diagrams as ` ```mermaid ` code blocks, not images, where a picture explai
 
 ## Checking pages against Lumi's code
 
-Pages must match Lumi's current code, not paraphrase older docs. Lumi's code lives in `nieve-consulting/lumi` on GitHub, which is private for now; Nieve-run agents have access to it.
+Pages must match Lumi's current code, not paraphrase older docs. Lumi's code lives in the public [`nieve-consulting/lumi`](https://github.com/nieve-consulting/lumi) repository on GitHub.
 
-- Locally, use a sibling checkout (`../lumi`). In the cloud, clone it with the credential Nieve provides for agents. The site's build and CI never need access to Lumi, so contributors without access can build and preview the site.
+- Locally, use a sibling checkout (`../lumi`); in the cloud, clone `https://github.com/nieve-consulting/lumi.git`. The site's build and CI never need Lumi's code, so contributors can build and preview the site without it.
 - Start from Lumi's `AGENTS.md` and the guide for each area (`frontend/AGENTS.md`, `backend/AGENTS.md`, `widget/AGENTS.md`), then read the code, configuration (`deploy/.env.example`), migrations and GraphQL schema behind each statement.
 - When a page needs a change in Lumi as well (a wrong comment, a README link), open a pull request on Lumi for that part. When a Lumi change is user-facing, Lumi's agents open a companion pull request here.
 
 ## Keeping private material out
 
-The docs are public. Never publish credentials, tokens, customer or visitor conversations, personal data, internal notes or details of Nieve's private infrastructure. Don't link readers to files in the Lumi repository while it is private: name the file in code formatting (for example "`deploy/.env.example` in Lumi's source") and explain on the page what the reader needs.
+The docs are public. Never publish credentials, tokens, customer or visitor conversations, personal data, internal notes or details of Nieve's private infrastructure. Lumi's repository is public, so pages may link to its files on `main`, for example [`deploy/.env.example`](https://github.com/nieve-consulting/lumi/blob/main/deploy/.env.example), or name them in code formatting ("`deploy/.env.example` in Lumi's source"). Either way, explain on the page what the reader needs rather than sending them to the code. `pnpm check` doesn't verify links into Lumi's repository, so open them before handing off.
 
 ## Checks
 

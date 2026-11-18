@@ -3,7 +3,7 @@ title: "Qualification, booking and enquiries"
 description: "How Lumi hands a conversation to your team through qualification questions, booking pages, in-chat calendar booking and enquiries delivered by email or webhook."
 ---
 
-When a visitor wants to take the conversation further, Lumi hands it to your team: it offers your booking page, books a time in your calendar, or sends your team an enquiry with the visitor's details. Admins decide what Lumi asks beforehand, which contact details it collects and where it sends visitors, in the admin interface under **Settings → Enquiries & booking**. Nothing is sent anywhere until you configure it, and no default recipient, calendar or booking page is used. The settings and their checks are defined in `@lumi/shared-contracts/handoff` in Lumi's source (`packages/shared-contracts/src/handoff.ts`).
+When a visitor wants to take the conversation further, Lumi hands it to your team: it offers your booking page, books a time in your calendar, or sends your team an enquiry with the visitor's details. Admins decide what Lumi asks beforehand, which contact details it collects and where it sends visitors, in the admin interface under **Settings → Enquiries & booking**. Nothing is sent anywhere until you configure it, and no default recipient, calendar or booking page is used. The settings and their checks are defined in `@lumi/shared-contracts/handoff` in Lumi's source ([`packages/shared-contracts/src/handoff.ts`](https://github.com/nieve-consulting/lumi/blob/main/packages/shared-contracts/src/handoff.ts)).
 
 ## Settings
 
@@ -36,7 +36,7 @@ The visitor is told the enquiry was sent only once a delivery channel accepted i
 
 ## Delivery channels
 
-Each enquiry is stored with the conversation, then sent through every enabled channel. Channels are plugins: the backend registers one implementation per channel type (`backend/src/handoff/delivery/` in Lumi's source). This release ships email and webhook.
+Each enquiry is stored with the conversation, then sent through every enabled channel. Channels are plugins: the backend registers one implementation per channel type ([`backend/src/handoff/delivery/`](https://github.com/nieve-consulting/lumi/tree/main/backend/src/handoff/delivery) in Lumi's source). This release ships email and webhook.
 
 ### Email
 

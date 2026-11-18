@@ -1,5 +1,4 @@
-// Checks every internal link (page and #anchor) in content/docs, and that no page
-// links readers into Lumi's private source repository.
+// Checks every internal link (page and #anchor) in content/docs.
 import GithubSlugger from 'github-slugger';
 import { readPages, scan } from './content.mjs';
 
@@ -27,10 +26,6 @@ for (const page of pages) {
   anchors.set(page.url, ids);
 }
 
-// Lumi's source repository is private for now; the docs site and Lumi's
-// releases page are fine to link.
-const privateRepo = /github\.com\/nieve-consulting\/lumi(?![-\w])(?!\/releases)/;
-
 const errors = [];
 let checked = 0;
 for (const page of pages) {
@@ -41,10 +36,6 @@ for (const page of pages) {
       ...[...prose.matchAll(/href=["']([^"']+)["']/g)].map((m) => m[1]),
     ];
     for (const target of targets) {
-      if (privateRepo.test(target)) {
-        errors.push(`${page.file}:${line}: links to Lumi's private repository: ${target}`);
-        continue;
-      }
       if (/^[a-z]+:/i.test(target)) continue;
       checked += 1;
       if (!target.startsWith('/') && !target.startsWith('#')) {

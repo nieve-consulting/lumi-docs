@@ -1,6 +1,6 @@
 # Contributing to Lumi's docs
 
-Fixes, clarifications and new pages are welcome, from a typo to a guide for a setup you've run. You don't need access to Lumi's source repository: the site builds and previews without it.
+Fixes, clarifications and new pages are welcome, from a typo to a guide for a setup you've run. You don't need Lumi's source code: the site builds and previews without it.
 
 ## Proposing a change
 
