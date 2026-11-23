@@ -31,6 +31,8 @@ Unpublished team members, projects, clients and job openings stay in the admin i
 
 Add a website with its address and the path of its sitemap. Lumi reads the sitemap, fetches each page it lists, extracts the page's text and indexes it for search.
 
+When a reply draws on your website, the chat links up to three of the pages its searches found under the reply, starting with each search's closest match, in a **Related pages** list that is collapsed until the visitor opens it. The pages are the closest matches, not necessarily the ones the reply quotes. Each page is linked once, also when its addresses differ only by `www`, a trailing slash or tracking parameters, and the page the visitor is reading in the embedded chat is left out. A reply whose searches found no other pages shows no list.
+
 ### Supported content
 
 - **Sitemaps:** an XML sitemap (`urlset`) or a sitemap index (`sitemapindex`) listing XML sitemaps, one level deep, served as `application/xml` or `text/xml`. The sitemaps of an index must be on the website's host or the index's. If any of them fails, the whole crawl fails, so a partial read never removes pages. Compressed (`.xml.gz`) sitemaps, RSS/Atom feeds and plain-text URL lists aren't supported. A site without a sitemap can't be crawled yet.
