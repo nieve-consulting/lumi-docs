@@ -33,6 +33,8 @@ Add a website with its address and the path of its sitemap. Lumi reads the sitem
 
 When a reply draws on your website, the chat links up to three of the pages its searches found under the reply, starting with each search's closest match, in a **Related pages** list that is collapsed until the visitor opens it. The pages are the closest matches, not necessarily the ones the reply quotes. Each page is linked once, also when its addresses differ only by `www`, a trailing slash or tracking parameters, and the page the visitor is reading in the embedded chat is left out. A reply whose searches found no other pages shows no list.
 
+On a website in several languages, Lumi prefers pages in the conversation's language: the language the visitor writes in, else the chat's. When a search finds a page and its translation, it leaves out the one in the other language, and the list only links pages in the conversation's language whenever the searches found any. Lumi reads each page's language from its `<html lang>` attribute, else from its own `hreflang` link, else from a language at the start of its path such as `/es/`. It recognises a page's translations by their `hreflang` links, else by their paths without that language segment, so `/es/blog/post` translates `/blog/post`. Pages whose language Lumi can't tell are used in every conversation.
+
 ### Supported content
 
 - **Sitemaps:** an XML sitemap (`urlset`) or a sitemap index (`sitemapindex`) listing XML sitemaps, one level deep, served as `application/xml` or `text/xml`. The sitemaps of an index must be on the website's host or the index's. If any of them fails, the whole crawl fails, so a partial read never removes pages. Compressed (`.xml.gz`) sitemaps, RSS/Atom feeds and plain-text URL lists aren't supported. A site without a sitemap can't be crawled yet.
@@ -60,7 +62,7 @@ Crawls run when an admin starts them; there is no schedule. After you change you
 
 1. reads the sitemap again;
 2. skips pages whose sitemap `lastmod` date is not newer than when they were last indexed, and pages without a `lastmod` date already checked since the last crawl that completed;
-3. fetches every other page (new, modified, or without a `lastmod` date) and indexes it again only if its text changed;
+3. fetches every other page (new, modified, without a `lastmod` date, or indexed before Lumi recorded page languages) and indexes it again only if its text changed;
 4. removes pages that answer `401`, `403`, `404 Not Found` or `410 Gone`, aren't HTML or are too large, redirect to another host, or redirect to another page the crawl reads;
 5. skips pages that time out or answer with a server error, keeping what was indexed from them, and tries them again on the next crawl;
 6. once every page has been checked, removes pages the sitemap no longer lists, now excluded, or over the page limit.
