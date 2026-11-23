@@ -88,7 +88,7 @@ Every tool is a read-only lookup of public knowledge. None writes, sends or book
 
 | Tool | What it reads |
 | --- | --- |
-| `webpage_search` | The pages of the business's websites. An OpenAI call first rewrites the question into a self-contained search query using the last few messages. The query is embedded with OpenAI, and PostgreSQL's pgvector ranks the crawled pages' passages by cosine distance. The closest passages come back with their page's title and address. The chat links up to three of those pages under the reply as sources, each once and without the page the visitor is reading. |
+| `webpage_search` | The pages of the business's websites. An OpenAI call first rewrites the question into a self-contained search query using the last few messages. The query is embedded with OpenAI, and PostgreSQL's pgvector ranks the crawled pages' passages by cosine distance. The closest passages come back with their page's title and address. The chat links up to three of the turn's closest pages under the reply as related pages, each once and without the page the visitor is reading. |
 | `read_current_page` | The page the visitor is on, fetched live, when the turn has one. Only allowed on turns with a page address the agents API accepted. |
 | `get_company_info` | The business's company information. |
 | `get_team_members`, `get_team_member` | Published team members, when that source is on. |
