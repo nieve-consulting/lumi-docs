@@ -33,11 +33,12 @@ docker compose run --rm api status
 
 `status` shows:
 
-- the Lumi version of the images, and the latest release with whether it is newer, unless `LUMI_UPDATE_CHECK=off`;
+- the Lumi version of the images;
 - which database is in use, bundled or your own, its PostgreSQL version and whether pgvector is installed;
 - which media storage is in use, bundled or your own, and whether it answers and has its bucket;
 - the schema migrations applied, the latest one, and any pending;
 - whether the conversation checkpoint tables exist;
+- the latest release and whether it is newer than the images, unless `LUMI_UPDATE_CHECK=off`;
 - whether the business is set up, and its name;
 - how many admins and active API keys there are;
 - how many conversations and enquiries it holds, the oldest conversation's last activity, and enquiries not delivered;
@@ -97,7 +98,7 @@ Apply a change with `docker compose up -d`.
 Releases are published on [GitHub](https://github.com/nieve-consulting/lumi/releases). Since 0.62.0, each release's notes start with an **Upgrading** section: its database migrations, whether the previous release still works after them, configuration changes and anything to do after upgrading. To be told of new releases, watch the repository's releases on GitHub. The installation also tells you:
 
 - **In the admin**, the foot of the navigation shows the Lumi version the installation runs. When a newer release is published, it says so there, with links to the release's notes and to these upgrade instructions.
-- **`status`** shows the latest release under the version, and whether it is newer.
+- **`status`** shows the latest release after the schema, and whether it is newer.
 
 Both come from the `api` service asking GitHub's API for the latest release, about twice a day, sending nothing about the installation. Set `LUMI_UPDATE_CHECK=off` in `deploy/.env` for an installation that must not contact GitHub: the admin and `status` then show only the version. When GitHub can't be reached, the admin shows only the version and `status` says why.
 
