@@ -1,0 +1,40 @@
+---
+title: Self-host an AI website chatbot for your agency
+description: Try Lumi by Nieve Consulting, then self-host it with Docker Compose, embed it on your agency website, and test lead qualification, booking and enquiry delivery.
+---
+
+This walkthrough sets up Lumi, Nieve Consulting's open-source website chatbot, for a fictional web design agency called Northline Studio. A prospective client asks about a website redesign, Lumi answers from the agency's published work, and the visitor can book a call or send an enquiry. Use your own website, booking page and test inbox as you follow along.
+
+## Try the live demo
+
+Open the [live Nieve Consulting demo](https://chat.lumi.nieve.ai) and ask “What kinds of AI projects has Nieve Consulting delivered?” Follow up with “Do you have a case study I can read?” This uses Nieve's published knowledge. Save the booking or enquiry test for your own installation.
+
+## Install Lumi with Docker Compose
+
+You need a host with Docker and Docker Compose, and an OpenAI API key. Run one installation per business. For an agency website or a client deployment, point a domain at the host and make it available over HTTPS. Docker Desktop works for a local trial.
+
+1. Follow the [installation instructions](/self-hosting#install) to choose a Lumi release, configure it, initialize the database and start the services.
+2. Open your installation's public URL and complete the first-run setup. Enter your agency name, website and contact link, then create the first administrator.
+3. Sign in at `/auth/signin` and open the admin interface. For an agency managing multiple client sites, repeat the setup for each client's business.
+
+## Add website knowledge and qualification questions
+
+1. Publish a services page and a case study or FAQ that answer questions a prospect might ask. Northline's services page describes its redesign work, and its case study shows a redesign for a professional services firm.
+2. In **Knowledge → Websites**, select **Add website** and enter your public website and sitemap path. Choose **Update Pages** from the website's menu and wait for the crawl to finish in the **Status** column. Run **Update Pages** again after you change the site. See [Website knowledge](/configuration/knowledge#websites).
+3. Under **Settings → Enquiries & booking**, add two qualification questions, such as “What would you like the new website to improve?” and “When are you hoping to launch?” Lumi skips questions the visitor has already answered. See [Qualification and handoff settings](/configuration/handoff#settings).
+
+## Set up booking or enquiries
+
+- **Booking page.** Choose **Booking page** as the booking destination and enter the full URL of a booking page you control. The visitor books on that page. To offer a time picker inside the chat, follow the [Google Calendar setup](/configuration/handoff#calendar-booking), which requires Google Workspace and a service account.
+- **Enquiry form.** Set up a delivery channel first. For email, configure `EMAIL_FROM` and `SMTP_URL` on the server and add a test recipient in the admin settings. You can also use an HTTPS webhook you control. Enable the enquiry form and choose the contact fields. At least one of email or phone must be required. See [Delivery channels](/configuration/handoff#delivery-channels).
+
+You can enable both so visitors can choose how to get in touch.
+
+## Embed the widget and test the visitor journey
+
+1. Add the [widget script](/using-lumi/embedding-the-widget#add-the-widget-to-a-page) to a staging page on your website. Use your installation's HTTPS address in the script URL.
+2. Open the staging page in a private browser window, open the launcher and ask “Do you redesign websites for consulting firms? Can you show me a relevant project?” Adapt the question to your own pages. Check that the answer reflects what you published and links to a relevant source. Then say “We want more enquiries from our site and hope to launch in September.” Check that any follow-up question builds on what you already said.
+3. Ask “Can I talk to your team about the redesign?” Try the handoff you configured. With a booking page, check that the button opens the right page. With the in-chat picker, book a slot on your test calendar and check that the invitation arrives. With the enquiry form, review the prefilled project details and qualification answers, submit using an address you control, and check that the test inbox or webhook receives it.
+4. Open **Conversations** in the admin interface and find your test chat. If you sent an enquiry, check its delivery status there. If the answer used stale content, run **Update Pages** and try a fresh chat. If the enquiry failed, check the [delivery status and retry instructions](/configuration/handoff#when-delivery-fails).
+
+Before embedding the widget on your public site, work through the [self-hosting checklist](/self-hosting#before-going-public) and repeat the test with the booking or enquiry destination you intend to use.
