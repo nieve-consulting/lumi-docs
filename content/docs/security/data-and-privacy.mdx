@@ -52,6 +52,7 @@ Some data leaves the installation while Lumi works. Deleting it in Lumi doesn't 
 | Google Workspace                  | With Workspace sign-in                     | Admins' identity and group membership checks                                                                                               |
 | Langfuse                          | With Langfuse keys set                     | Traces of conversations and admin AI calls, including message content                                                                      |
 | Crawled websites, visitors' pages | When crawling, or reading a visitor's page | Requests from `LumiBot/1.0`. Nothing about visitors is sent                                                                                |
+| GitHub                            | Unless `LUMI_UPDATE_CHECK=off`             | A request from the `api` service for Lumi's latest release, about twice a day and on each `status` run. Nothing about the installation, not even its version; GitHub sees the server's address |
 | Your backups                      | When you take them                         | Whatever the stores above held at the time                                                                                                 |
 
 Review providers' terms and data settings for your own accounts. Don't assume they share the same retention or processing.
@@ -61,7 +62,7 @@ The diagram summarises both tables. Inside the installation, Lumi's services kee
 ```mermaid
 flowchart LR
   accTitle: Where Lumi keeps data and which integrations receive it
-  accDescr: The visitor's browser keeps the conversation id. Lumi's services keep data in PostgreSQL and media storage, and the host keeps deploy/.env, certificates and container logs. OpenAI always receives prompts and text to embed. Enquiry and meeting emails go through SMTP, enquiries to webhook receivers, meetings to Google Calendar, admin identity checks to Google Workspace and traces to Langfuse, each only when configured. Crawled websites and visitors' pages receive requests only.
+  accDescr: The visitor's browser keeps the conversation id. Lumi's services keep data in PostgreSQL and media storage, and the host keeps deploy/.env, certificates and container logs. OpenAI always receives prompts and text to embed. Enquiry and meeting emails go through SMTP, enquiries to webhook receivers, meetings to Google Calendar, admin identity checks to Google Workspace and traces to Langfuse, each only when configured. Crawled websites and visitors' pages receive requests only, and GitHub a request for Lumi's latest release unless the update check is off.
   browser["Visitor's browser: conversation id"] --> services
   subgraph installation["Lumi installation"]
     services["Lumi services"]
@@ -78,6 +79,7 @@ flowchart LR
   services -->|Workspace sign-in| gws["Google Workspace: admins' identity and group membership"]
   services -->|Langfuse keys set| langfuse["Langfuse: traces with message content"]
   services -->|Crawls and page reads| web["Crawled websites, visitors' pages: requests from LumiBot/1.0 only"]
+  services -->|Update check on| github["GitHub: a request for Lumi's latest release"]
 ```
 
 ## Export
